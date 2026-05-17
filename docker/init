@@ -1,9 +1,0 @@
-#!/bin/sh
-
-trap 'kill $(jobs -p)' TERM
-
-hoarder $* --selenium.enabled --selenium.browser=firefox --selenium.binary=/opt/firefox/firefox --selenium.jar=/selenium.jar &
-
-HOARDER=$!
-wait "$HOARDER"
-exit $?

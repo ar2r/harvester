@@ -12,6 +12,8 @@ import (
 	"github.com/jfk9w/hoarder/internal/logs"
 )
 
+const maxUnavailableFiscalDataSkips = 5
+
 type FiscalData struct {
 	Phone     string
 	BatchSize int
@@ -25,20 +27,21 @@ func (l FiscalData) Load(ctx jobs.Context, client Client, db database.DB) (_ []I
 	return nil, jobs.Batch[int]{
 		Key:  "offset",
 		Size: l.BatchSize,
-	}.Run(ctx, fiscalDataBatch{
+	}.Run(ctx, (&fiscalDataBatch{
 		phone:  l.Phone,
 		client: client,
 		db:     db,
-	}.load)
+	}).load)
 }
 
 type fiscalDataBatch struct {
-	phone  string
-	client Client
-	db     database.DB
+	phone                string
+	client               Client
+	db                   database.DB
+	unavailableDataSkips int
 }
 
-func (l fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset *int, errs error) {
+func (l *fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset *int, errs error) {
 	var pendingReceipts []struct {
 		Key           string
 		HasFiscalData bool
@@ -78,6 +81,19 @@ func (l fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset *
 				continue
 			}
 
+			if strings.Contains(err.Error(), "receipt.fiscal.data.unavailable") {
+				l.unavailableDataSkips++
+				if l.unavailableDataSkips <= maxUnavailableFiscalDataSkips {
+					ctx.Warn(msg, logs.Error(err),
+						"skipped", l.unavailableDataSkips,
+						"limit", maxUnavailableFiscalDataSkips)
+					continue
+				}
+
+				_ = ctx.Error(&errs, err, "fiscal data unavailable skip limit exceeded")
+				return
+			}
+
 			_ = ctx.Error(&errs, err, msg)
 			return
 		}
@@ -95,7 +111,10 @@ func (l fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset *
 			return
 		}
 
-		ctx.Debug("updated entity in db")
+		ctx.Info("загружены детали чека",
+			"store", entity.RetailPlace,
+			"total_sum", entity.TotalSum,
+			"items_count", len(entity.Items))
 	}
 
 	if len(pendingReceipts) == limit {

@@ -2,6 +2,7 @@ package triggers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -48,7 +49,7 @@ func (r *Registry) Run(ctx context.Context, job Jobs) {
 		})
 
 		go func() {
-			if err := goroutine.Join(ctx); err != nil {
+			if err := goroutine.Join(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("panic in trigger", logs.Error(err))
 			}
 		}()
