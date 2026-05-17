@@ -1,0 +1,20 @@
+# VCS and IDE
+.git
+.idea
+.vscode
+
+# Build artifacts and dependencies
+bin
+vendor
+
+# Local data — never send to the docker daemon
+config.json
+*.db
+lkdr-report.txt
+reports
+
+# Python and docs are not needed inside the image
+.venv
+scripts
+docs
+__pycache__

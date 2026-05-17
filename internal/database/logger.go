@@ -64,9 +64,12 @@ func (l slogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql s
 	if err != nil {
 		level = slog.LevelError
 		attrs = append(attrs, logs.Error(err))
+		l.log(ctx, level, sql, attrs...)
+		return
 	}
 
-	l.log(ctx, level, sql, attrs...)
+	// Do not log raw SQL queries on success to keep logs clean
+	// l.log(ctx, level, sql, attrs...)
 }
 
 func (l *slogLogger) log(ctx context.Context, level slog.Level, msg string, args ...slog.Attr) {

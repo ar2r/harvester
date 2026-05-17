@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"time"
 
 	"github.com/jfk9w-go/based"
@@ -59,6 +60,15 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}
 
 	storage := &storage{db: db}
+
+	var apiTransport http.RoundTripper
+	if apiURL := params.Config.APIURL; apiURL != "" {
+		apiTransport, err = NewRedirectTransport(apiURL)
+		if err != nil {
+			return nil, errors.Wrap(err, "create api transport")
+		}
+	}
+
 	users := make(map[string]map[string]Client)
 	for user, credentials := range params.Config.Users {
 		phones := make(map[string]Client)
@@ -73,12 +83,13 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 				}
 			}
 
-			client, err := lkdr.NewClient(lkdr.ClientParams{
+			client, err := params.ClientFactory(lkdr.ClientParams{
 				Phone:        credential.Phone,
 				Clock:        params.Clock,
 				DeviceID:     deviceID,
 				UserAgent:    credential.UserAgent,
 				TokenStorage: storage,
+				Transport:    apiTransport,
 			})
 
 			if err != nil {

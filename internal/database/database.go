@@ -8,6 +8,7 @@ import (
 
 	"github.com/jfk9w-go/based"
 	"github.com/pkg/errors"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
@@ -34,12 +35,7 @@ func Open(ctx context.Context, params Params) (DB, error) {
 		return DB{}, err
 	}
 
-	driver, ok := drivers[params.Config.Driver]
-	if !ok {
-		return DB{}, errors.Errorf("unsupported driver: %s", params.Config.Driver)
-	}
-
-	db, err := gorm.Open(driver(params.Config.DSN), &gorm.Config{
+	db, err := gorm.Open(sqlite.Open(params.Config.DSN), &gorm.Config{
 		NowFunc: params.Clock.Now,
 		Logger: slogLogger{
 			logger: params.Logger,

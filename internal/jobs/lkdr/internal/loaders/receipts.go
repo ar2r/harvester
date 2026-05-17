@@ -3,6 +3,7 @@ package loaders
 import (
 	"database/sql"
 	"strings"
+	"time"
 
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
@@ -38,6 +39,9 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 	var dateFrom *lkdr.Date
 	if from.Valid {
 		dateFrom = pointer.To(lkdr.Date(from.Time))
+	} else {
+		// Limit to last 12 months for the initial sync
+		dateFrom = pointer.To(lkdr.Date(time.Now().AddDate(-1, 0, 0)))
 	}
 
 	return nil, jobs.Batch[int]{
@@ -110,6 +114,13 @@ func (l receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffset
 		}
 
 		ctx.Debug("updated receipts in db", "count", len(receipts))
+
+		for _, receipt := range receipts {
+			ctx.Info("загружен чек",
+				"store", receipt.KktOwner,
+				"total_sum", receipt.TotalSum,
+				"date", receipt.ReceiveDate.Time().Format(time.DateTime))
+		}
 	}
 
 	if out.HasMore {

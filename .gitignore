@@ -1,6 +1,55 @@
-.vscode/settings.json
-.vscode/settings.local.json
-bin/*
-dist/*
+# Binaries and build outputs
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Configuration files
 config.json
+config.local.json
+.env
+.env.*
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE and editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Java archives
 *.jar
+
+# Logs (только в корне: /logs/, чтобы не задевать пакет internal/logs)
+/logs/
+*.log
+
+# Python
+scripts/__pycache__/
+
+# Local report outputs (содержат личные покупки — не коммитить)
+/reports/
+/lkdr-report.txt
+
+# Root binaries from ad-hoc builds
+/hoarder
+/app
+/mocklkdr
+
+# Vendor directory (if ignored)
+vendor/
