@@ -63,7 +63,7 @@ make run
 Прямой запуск бинарником:
 
 ```bash
-./bin/app --config.file=config.json --stdin.user=all --stdin.jobs=lkdr
+./bin/app --config.file=config.json --stdin.user=all
 ```
 
 Приложение запросит код из СМС, авторизуется и начнёт выгрузку. Токены

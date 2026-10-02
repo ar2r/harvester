@@ -8,7 +8,7 @@
 |---------|-----------|
 | `make build` / `make bin` | Сборка бинарников в `bin/` (`app`, `mocklkdr`). |
 | `make test` | `go test -v ./...`. |
-| `make run` | Сборка и запуск с `./config.json`: DEBUG-логи, все пользователи из конфига (`RUN_USER=all` по умолчанию, `RUN_JOBS=lkdr`). |
+| `make run` | Сборка и запуск с `./config.json`: DEBUG-логи, все пользователи из конфига (`RUN_USER=all` по умолчанию). |
 | `make clean` | Очистка `bin/`. |
 | `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md). |
 | `scripts/dist.sh` | Релизные архивы в `bin/` для windows/linux/darwin × amd64/arm64 (матрица сужается `GOOSES=… GOARCHES=…`; кросс требует C-компилятор из-за SQLite/CGO). |

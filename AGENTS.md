@@ -36,7 +36,7 @@
 ```bash
 make build
 make run
-./bin/app --config.file=./config.json --stdin.user=all --stdin.jobs=lkdr
+./bin/app --config.file=./config.json --stdin.user=all
 ```
 
 - `internal/jobs/lkdr/job.go`: сначала загрузчик `Receipts`, затем `FiscalData`.

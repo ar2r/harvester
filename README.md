@@ -53,7 +53,7 @@ make build
 ```bash
 make run
 # или напрямую:
-./bin/app --config.file=config.json --stdin.user=all --stdin.jobs=lkdr
+./bin/app --config.file=config.json --stdin.user=all
 ```
 
 `make run` без параметров выполняет задачи **для всех пользователей из
@@ -73,7 +73,7 @@ make run
 - комбинации работают вместе: `--debug --json`.
 
 ```bash
-./bin/app --json --config.file=config.json --stdin.user=all --stdin.jobs=lkdr
+./bin/app --json --config.file=config.json --stdin.user=all
 ```
 
 ### 4. Регулярный запуск (опционально)
@@ -82,7 +82,7 @@ make run
 вызывайте однократный запуск по расписанию внешними средствами, например crontab:
 
 ```cron
-0 8 * * * cd /path/to/ledgerfox && ./bin/app --config.file=config.json --stdin.user=all --stdin.jobs=lkdr
+0 8 * * * cd /path/to/ledgerfox && ./bin/app --config.file=config.json --stdin.user=all
 ```
 
 ### 5. Отчёт по покупкам
