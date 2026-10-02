@@ -77,16 +77,7 @@ make run
 ./bin/app --json --config.file=config.json --stdin.user=all
 ```
 
-### 4. Регулярный запуск (опционально)
-
-Встроенного планировщика нет — запуск только ручной. Если нужна периодичность,
-вызывайте однократный запуск по расписанию внешними средствами, например crontab:
-
-```cron
-0 8 * * * cd /path/to/ledgerfox && ./bin/app --config.file=config.json --stdin.user=all
-```
-
-### 5. Отчёт по покупкам
+### 4. Отчёт по покупкам
 
 ```bash
 make lkdr-report
