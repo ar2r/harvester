@@ -310,6 +310,38 @@ func TestIntegrationJobIncrementalSyncStartsFromLatestReceipt(t *testing.T) {
 	}
 }
 
+func TestIntegrationJobFirstSyncFromConfiguredDate(t *testing.T) {
+	cfg, dsn := integrationConfig(t)
+	cfg.FirstSyncFrom = "2020-01-01"
+
+	job, server := newMockBackedJob(t, cfg, nil)
+	seedTokens(t, dsn)
+
+	if err := job.Run(jobs.NewContext(context.Background(), discardLogger()), time.Now(), "a"); err != nil {
+		t.Fatalf("unexpected errors: %v", err)
+	}
+
+	var dateFrom string
+	for _, request := range server.Requests() {
+		if request.Path != "/api/v1/receipt" {
+			continue
+		}
+
+		var in lkdr.ReceiptIn
+		if err := json.Unmarshal([]byte(request.Body), &in); err != nil {
+			t.Fatal(err)
+		}
+
+		if in.DateFrom != nil {
+			dateFrom = in.DateFrom.Time().Format("2006-01-02")
+		}
+	}
+
+	if dateFrom != "2020-01-01" {
+		t.Fatalf("expected first sync from 2020-01-01, got %q", dateFrom)
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

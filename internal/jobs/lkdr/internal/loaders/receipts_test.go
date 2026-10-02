@@ -34,6 +34,30 @@ func TestReceiptsFirstSyncLimitsToTwelveMonths(t *testing.T) {
 	}
 }
 
+func TestReceiptsFirstSyncFromConfiguredDate(t *testing.T) {
+	db := testDB(t)
+
+	var dateFrom *lkdr.Date
+	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		dateFrom = in.DateFrom
+		return &lkdr.ReceiptOut{}, nil
+	}}
+
+	loader := Receipts{
+		Phone:         "79000000000",
+		BatchSize:     100,
+		FirstSyncFrom: pointer.To(lkdr.Date(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))),
+	}
+
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	if dateFrom == nil || dateFrom.Time().Format("2006-01-02") != "2020-01-01" {
+		t.Fatalf("expected dateFrom 2020-01-01, got %v", dateFrom)
+	}
+}
+
 func TestReceiptsIncrementalFromLatestReceiveDate(t *testing.T) {
 	db := testDB(t)
 	// seedReceipts создаёт чеки от базы 2026-01-01 00:00 UTC с шагом в час:

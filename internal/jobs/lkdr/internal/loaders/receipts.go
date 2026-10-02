@@ -17,6 +17,9 @@ import (
 type Receipts struct {
 	Phone     string
 	BatchSize int
+	// FirstSyncFrom — дата, с которой загружать чеки при первой синхронизации
+	// (в базе ещё нет чеков этого телефона). nil — последние 12 месяцев.
+	FirstSyncFrom *lkdr.Date
 }
 
 func (l Receipts) TableName() string {
@@ -37,9 +40,12 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 	}
 
 	var dateFrom *lkdr.Date
-	if from.Valid {
+	switch {
+	case from.Valid:
 		dateFrom = pointer.To(lkdr.Date(from.Time))
-	} else {
+	case l.FirstSyncFrom != nil:
+		dateFrom = l.FirstSyncFrom
+	default:
 		// Limit to last 12 months for the initial sync
 		dateFrom = pointer.To(lkdr.Date(time.Now().AddDate(-1, 0, 0)))
 	}

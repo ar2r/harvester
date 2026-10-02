@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/based"
 	"github.com/jfk9w-go/lkdr-api"
 	"github.com/pkg/errors"
@@ -35,6 +36,7 @@ type JobParams struct {
 type Job struct {
 	users         map[string]map[string]Client
 	batchSize     int
+	firstSyncFrom *lkdr.Date
 	captchaSolver captcha.TokenProvider
 	db            database.DB
 }
@@ -46,6 +48,11 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 
 	if params.ClientFactory == nil {
 		params.ClientFactory = defaultClientFactory
+	}
+
+	firstSyncFrom, err := parseFirstSyncFrom(params.Config.FirstSyncFrom)
+	if err != nil {
+		return nil, err
 	}
 
 	db, err := database.Open(ctx, database.Params{
@@ -106,6 +113,7 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	return &Job{
 		users:         users,
 		batchSize:     params.Config.BatchSize,
+		firstSyncFrom: firstSyncFrom,
 		captchaSolver: params.CaptchaSolver,
 		db:            db,
 	}, nil
@@ -143,7 +151,7 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 
 	var stack common.Stack[loaders.Interface]
 	stack.Push(
-		loaders.Receipts{Phone: phone, BatchSize: j.batchSize},
+		loaders.Receipts{Phone: phone, BatchSize: j.batchSize, FirstSyncFrom: j.firstSyncFrom},
 		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize},
 	)
 
@@ -161,6 +169,19 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 	}
 
 	return
+}
+
+func parseFirstSyncFrom(value string) (*lkdr.Date, error) {
+	if value == "" {
+		return nil, nil
+	}
+
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, errors.Wrapf(err, "parse firstSyncFrom %q: expected YYYY-MM-DD", value)
+	}
+
+	return pointer.To(lkdr.Date(date)), nil
 }
 
 func generateDeviceID(userAgent, phone string) (string, error) {

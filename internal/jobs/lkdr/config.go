@@ -13,9 +13,10 @@ type Credential struct {
 }
 
 type Config struct {
-	Database  database.Config         `yaml:"database" doc:"Настройки подключения к БД."`
-	APIURL    string                  `yaml:"apiUrl,omitempty" doc:"Базовый URL API ЛКДР. По умолчанию — сервис ФНС; для интеграционных тестов можно указать адрес мок-сервиса (docker compose up mocklkdr)."`
-	BatchSize int                     `yaml:"batchSize,omitempty" default:"1000" doc:"Количество чеков в одном запросе и количество фискальных данных за одно обновление."`
-	Timeout   time.Duration           `yaml:"timeout,omitempty" default:"5m" doc:"Таймаут для запросов."`
-	Users     map[string][]Credential `yaml:"users" doc:"Пользователи и их авторизационные данные."`
+	Database      database.Config         `yaml:"database" doc:"Настройка подключения к БД."`
+	APIURL        string                  `yaml:"apiUrl,omitempty" doc:"Базовый URL API ЛКДР. По умолчанию — сервис ФНС; для интеграционных тестов можно указать адрес мок-сервиса (docker compose up mocklkdr)."`
+	FirstSyncFrom string                  `yaml:"firstSyncFrom,omitempty" doc:"Дата (YYYY-MM-DD), с которой загружать чеки при первой синхронизации — когда в базе ещё нет чеков пользователя. По умолчанию — последние 12 месяцев. На повторные инкрементальные запуски не влияет."`
+	BatchSize     int                     `yaml:"batchSize,omitempty" default:"1000" doc:"Количество чеков в одном запросе и количество фискальных данных за одно обновление."`
+	Timeout       time.Duration           `yaml:"timeout,omitempty" default:"5m" doc:"Таймаут для запросов."`
+	Users         map[string][]Credential `yaml:"users" doc:"Пользователи и их авторизационные данные."`
 }
