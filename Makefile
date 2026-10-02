@@ -6,7 +6,6 @@ LKDR_CURRENCY_ARGS ?=
 LKDR_COLOR ?= auto
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
-RUN_JOBS ?= lkdr
 
 .PHONY: test bin build run clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
 
@@ -21,7 +20,7 @@ bin: $(subst ./cmd,bin,$(wildcard ./cmd/*))
 build: bin
 
 run: build
-	./bin/app --config.file=./config.json --log.level=DEBUG --stdin.user='$(RUN_USER)' --stdin.jobs='$(RUN_JOBS)'
+	./bin/app --config.file=./config.json --log.level=DEBUG --stdin.user='$(RUN_USER)'
 
 clean:
 	rm -rf bin/*

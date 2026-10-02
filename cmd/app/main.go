@@ -35,7 +35,6 @@ type Config struct {
 	Stdin *struct {
 		Enabled bool   `yaml:"enabled,omitempty" doc:"Включение интерактивной командной строки."`
 		User    string `yaml:"user,omitempty" doc:"ID пользователя, задания которого запускаются при старте без ввода."`
-		Jobs    string `yaml:"jobs,omitempty" doc:"Задания (через пробел), запускаемые при старте. Пусто — все включённые."`
 	} `yaml:"stdin,omitempty" doc:"Настройки управления через интерактивную командную строку."`
 
 	LKDR *struct {
@@ -115,7 +114,6 @@ func main() {
 		trigger, err := stdin.NewTrigger(stdin.TriggerParams{
 			Clock: clock,
 			User:  cfg.User,
-			Jobs:  cfg.Jobs,
 			Users: lkdrUsers,
 			JSON:  jsonOutput,
 			Exit: func(code int) {

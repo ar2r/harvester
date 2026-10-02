@@ -34,6 +34,12 @@ func (f *fakeJobs) Info() []jobs.Info {
 
 func (f *fakeJobs) Run(_ jobs.Context, _ time.Time, userID string, jobIDs []string) []jobs.Result {
 	f.runs = append(f.runs, fakeRun{userID: userID, jobIDs: jobIDs})
+
+	// Пустой список задач означает «все включённые» — как в реальном реестре.
+	if len(jobIDs) == 0 {
+		jobIDs = []string{"lkdr"}
+	}
+
 	results := make([]jobs.Result, len(jobIDs))
 	for i, jobID := range jobIDs {
 		result := jobs.Result{JobID: jobID}
@@ -72,7 +78,6 @@ func TestTriggerAutostartsConfiguredJobs(t *testing.T) {
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   "a",
-		Jobs:   "lkdr",
 		Reader: strings.NewReader(""),
 		Writer: &out,
 		Exit:   func(int) {},
@@ -84,7 +89,7 @@ func TestTriggerAutostartsConfiguredJobs(t *testing.T) {
 
 	trigger.Run(testContext(), registry)
 
-	expected := []fakeRun{{userID: "a", jobIDs: []string{"lkdr"}}}
+	expected := []fakeRun{{userID: "a"}}
 	if !reflect.DeepEqual(registry.runs, expected) {
 		t.Fatalf("unexpected runs: %+v, expected %+v", registry.runs, expected)
 	}
@@ -100,7 +105,6 @@ func TestTriggerDoesNotAutostartWithoutUser(t *testing.T) {
 
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
-		Jobs:   "lkdr",
 		Reader: strings.NewReader(""),
 		Writer: &out,
 		Exit:   func(int) {},
@@ -123,7 +127,7 @@ func TestTriggerRunsInteractively(t *testing.T) {
 
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
-		Reader: &lineReader{lines: []string{"b", "demo"}},
+		Reader: &lineReader{lines: []string{"b"}},
 		Writer: &out,
 		Exit:   func(int) {},
 	})
@@ -134,12 +138,12 @@ func TestTriggerRunsInteractively(t *testing.T) {
 
 	trigger.Run(testContext(), registry)
 
-	expected := []fakeRun{{userID: "b", jobIDs: []string{"demo"}}}
+	expected := []fakeRun{{userID: "b"}}
 	if !reflect.DeepEqual(registry.runs, expected) {
 		t.Fatalf("unexpected runs: %+v, expected %+v", registry.runs, expected)
 	}
 
-	if !strings.Contains(out.String(), "Enter user:") || !strings.Contains(out.String(), "✔ b/demo") {
+	if !strings.Contains(out.String(), "Enter user:") || !strings.Contains(out.String(), "✔ b/lkdr") {
 		t.Fatalf("unexpected output: %q", out.String())
 	}
 }
@@ -152,8 +156,7 @@ func TestTriggerExitsAfterAutostartInsteadOfAskingForUser(t *testing.T) {
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   "a",
-		Jobs:   "lkdr",
-		Reader: &lineReader{lines: []string{"b", "demo"}},
+		Reader: &lineReader{lines: []string{"b"}},
 		Writer: &out,
 		Exit:   func(code int) { codes = append(codes, code) },
 	})
@@ -181,7 +184,6 @@ func TestTriggerExitsWithNonZeroCodeAfterFailedAutostart(t *testing.T) {
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   "a",
-		Jobs:   "lkdr",
 		Reader: strings.NewReader(""),
 		Writer: &out,
 		Exit:   func(code int) { codes = append(codes, code) },
@@ -210,7 +212,6 @@ func TestTriggerJSONOutputOnSuccess(t *testing.T) {
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   "a",
-		Jobs:   "lkdr",
 		JSON:   true,
 		Reader: strings.NewReader(""),
 		Writer: &out,
@@ -236,12 +237,12 @@ func TestTriggerJSONOutputOnFailureAndPrompt(t *testing.T) {
 	var out bytes.Buffer
 	registry := &fakeJobs{failed: map[string]bool{"lkdr": true}}
 
-	// В интерактивном режиме триггер — бесконечный REPL: после двух строк
-	// ввода EOF завершает цикл, exit вызываться не должен.
+	// В интерактивном режиме триггер — бесконечный REPL: запрашивается
+	// только пользователь, после строки ввода EOF завершает цикл.
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		JSON:   true,
-		Reader: &lineReader{lines: []string{"a", "lkdr"}},
+		Reader: &lineReader{lines: []string{"a"}},
 		Writer: &out,
 		Exit:   func(code int) { t.Fatalf("unexpected exit call: %d", code) },
 	})
@@ -253,18 +254,17 @@ func TestTriggerJSONOutputOnFailureAndPrompt(t *testing.T) {
 	trigger.Run(testContext(), registry)
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("expected 4 json lines (2 prompts + result + repeat prompt before EOF), got %d: %q", len(lines), out.String())
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 json lines (prompt + result + repeat prompt before EOF), got %d: %q", len(lines), out.String())
 	}
 
-	assertJSONLines(t, strings.Join(lines[:2], "\n"), []map[string]any{
+	assertJSONLines(t, lines[0], []map[string]any{
 		{"event": "prompt", "message": "Enter user: "},
-		{"event": "prompt", "message": "Enter jobs: "},
 	})
 
 	var last map[string]any
-	if err := json.Unmarshal([]byte(lines[2]), &last); err != nil {
-		t.Fatalf("invalid json %q: %v", lines[2], err)
+	if err := json.Unmarshal([]byte(lines[1]), &last); err != nil {
+		t.Fatalf("invalid json %q: %v", lines[1], err)
 	}
 
 	if last["event"] != "job" || last["status"] != "error" || last["job"] != "lkdr" || last["user"] != "a" {
@@ -274,6 +274,10 @@ func TestTriggerJSONOutputOnFailureAndPrompt(t *testing.T) {
 	if last["error"] == "" {
 		t.Fatal("expected non-empty error field")
 	}
+
+	assertJSONLines(t, lines[2], []map[string]any{
+		{"event": "prompt", "message": "Enter user: "},
+	})
 }
 
 func TestTriggerAllUsersRunsEachConfiguredUserInOrder(t *testing.T) {
@@ -286,7 +290,6 @@ func TestTriggerAllUsersRunsEachConfiguredUserInOrder(t *testing.T) {
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   AllUsers,
-		Jobs:   "lkdr",
 		Users:  []string{"b", "a"},
 		Reader: strings.NewReader(""),
 		Writer: &out,
@@ -300,8 +303,8 @@ func TestTriggerAllUsersRunsEachConfiguredUserInOrder(t *testing.T) {
 	trigger.Run(testContext(), registry)
 
 	expected := []fakeRun{
-		{userID: "b", jobIDs: []string{"lkdr"}},
-		{userID: "a", jobIDs: []string{"lkdr"}},
+		{userID: "b"},
+		{userID: "a"},
 	}
 
 	// Порядок задан списком Users (main.go передаёт отсортированный).
@@ -326,7 +329,6 @@ func TestTriggerAllUsersWithoutConfiguredUsersFallsBackToSingleRun(t *testing.T)
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		User:   AllUsers,
-		Jobs:   "lkdr",
 		Reader: strings.NewReader(""),
 		Writer: &out,
 		Exit:   func(code int) { codes = append(codes, code) },
@@ -340,7 +342,7 @@ func TestTriggerAllUsersWithoutConfiguredUsersFallsBackToSingleRun(t *testing.T)
 
 	// Без списка пользователей "all" обрабатывается как обычный ID
 	// (в реальном приложении задача ответит ErrJobUnconfigured).
-	expected := []fakeRun{{userID: AllUsers, jobIDs: []string{"lkdr"}}}
+	expected := []fakeRun{{userID: AllUsers}}
 	if !reflect.DeepEqual(registry.runs, expected) {
 		t.Fatalf("unexpected runs: %+v, expected %+v", registry.runs, expected)
 	}

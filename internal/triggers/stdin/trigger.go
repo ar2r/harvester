@@ -26,7 +26,6 @@ const AllUsers = "all"
 type TriggerParams struct {
 	Clock based.Clock `validate:"required"`
 	User  string
-	Jobs  string
 	// Users — ID всех пользователей из конфигурации; используется,
 	// когда User == AllUsers.
 	Users []string
@@ -41,7 +40,6 @@ type TriggerParams struct {
 type Trigger struct {
 	clock based.Clock
 	user  string
-	jobs  string
 	users []string
 	json  bool
 	in    io.Reader
@@ -65,7 +63,6 @@ func NewTrigger(params TriggerParams) (*Trigger, error) {
 	return &Trigger{
 		clock: params.Clock,
 		user:  params.User,
-		jobs:  params.Jobs,
 		users: params.Users,
 		json:  params.JSON,
 		in:    params.Reader,
@@ -84,7 +81,7 @@ func (t *Trigger) Run(ctx triggers.Context, job triggers.Jobs) {
 		for _, user := range t.users {
 			// Каждый пользователь выполняется по очереди; ошибка одного
 			// не прерывает остальных, но портит итоговый код возврата.
-			if c := t.run(ctx.As(user), job, user, strings.Fields(t.jobs)); c != 0 {
+			if c := t.run(ctx.As(user), job, user); c != 0 {
 				code = c
 			}
 		}
@@ -94,7 +91,7 @@ func (t *Trigger) Run(ctx triggers.Context, job triggers.Jobs) {
 	}
 
 	if t.user != "" {
-		t.exit(t.run(ctx.As(t.user), job, t.user, strings.Fields(t.jobs)))
+		t.exit(t.run(ctx.As(t.user), job, t.user))
 		return
 	}
 
@@ -105,19 +102,12 @@ func (t *Trigger) Run(ctx triggers.Context, job triggers.Jobs) {
 			return
 		}
 
-		ctx := ctx.As(userID)
-		jobIDs, err := t.ask(ctx, "Enter jobs: ")
-		if err != nil {
-			ctx.Error("failed to get jobs", logs.Error(err))
-			return
-		}
-
-		_ = t.run(ctx, job, userID, strings.Fields(jobIDs))
+		_ = t.run(ctx.As(userID), job, userID)
 	}
 }
 
-func (t *Trigger) run(ctx triggers.Context, job triggers.Jobs, userID string, jobIDs []string) (code int) {
-	results := job.Run(ctx.Job().WithAskFn(t.ask), t.clock.Now(), userID, jobIDs)
+func (t *Trigger) run(ctx triggers.Context, job triggers.Jobs, userID string) (code int) {
+	results := job.Run(ctx.Job().WithAskFn(t.ask), t.clock.Now(), userID, nil)
 
 	if t.json {
 		for _, result := range results {
