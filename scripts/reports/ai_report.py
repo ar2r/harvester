@@ -345,6 +345,21 @@ def collect(
         reverse=True,
     )[: args.top]
 
+    # Разбор Прочего: что осталось без категории — топ позиций и хвост.
+    other_rows = sorted(
+        (
+            (name, item.quantity, item.total)
+            for (item_currency, name), item in current.items.items()
+            if item_currency == currency
+            and item.total > 0
+            and base.categorize_item(name) == "Прочее"
+        ),
+        key=lambda row: row[2],
+        reverse=True,
+    )
+    other_top = other_rows[: args.top]
+    other_total = sum(total for _, _, total in other_rows)
+
     return {
         "end": end,
         "start": start,
@@ -363,6 +378,10 @@ def collect(
         "category_rows": category_rows,
         "recurring": recurring,
         "top_items": top_items,
+        "other_rows": other_top,
+        "other_rest_count": max(len(other_rows) - len(other_top), 0),
+        "other_rest_total": sum(total for _, _, total in other_rows[args.top :]),
+        "other_total": other_total,
         "current_report": current,
         "previous_report": previous,
         "last_receipt": base.latest_receipt_datetime(conn),
@@ -658,6 +677,17 @@ def build_render(
         "category_list_title": "Все категории: было → стало",
         "category_list_intro": "Полоса «Раньше» и «Сейчас» в общей шкале; отрицательные значения — левее нулевой линии.",
         "category_list_footnote": "Сервисные строки (доставка, упаковка, компенсации) исключены из категорий.",
+        # Разбор Прочего
+        "other_breakdown_title": "Что осталось в Прочем",
+        "other_breakdown_note": (
+            f"{base.money(stats.total, currency)} чистых расходов; "
+            f"Прочее — {base.money(data['other_total'], currency)}"
+        ),
+        "other_breakdown_footnote": (
+            f"Позиции, не распознанные категориями; "
+            f"ещё {data['other_rest_count']} позиций на {base.money(data['other_rest_total'], currency)} "
+            "не показаны. Пустые названия чеков отмечены как «(без названия)»."
+        ),
         "category_total_title": "Сумма по категориям",
         "category_total_previous_label": "Предыдущий период:",
         "category_total_current_label": "Текущий период:",
@@ -879,6 +909,39 @@ def build_render(
         )
         for name, purchases, quantity, total, avg_unit in data["recurring"][: data["top"]]
     ) or T_ITEM_ROW.format(name="нет повторяющихся покупок", receipts="—", qty="—", total="—")
+
+    T_OTHER_ROW = """          <tr>
+            <td>{name}</td>
+            <td class="num">{qty}</td>
+            <td class="num">{total}</td>
+            <td class="num">{share}</td>
+          </tr>"""
+    other_rows = []
+    for name, quantity, total in data["other_rows"]:
+        display = short_item(name) if name.strip() else "(без названия)"
+        other_rows.append(
+            T_OTHER_ROW.format(
+                name=display,
+                qty=f"{quantity:g}",
+                total=base.money(total, currency),
+                share=fmt_share(total, data["other_total"]),
+            )
+        )
+    if data["other_rest_count"]:
+        other_rows.append(
+            T_OTHER_ROW.format(
+                name=f"… ещё {data['other_rest_count']} позиций",
+                qty="—",
+                total=base.money(data["other_rest_total"], currency),
+                share=fmt_share(data["other_rest_total"], data["other_total"]),
+            )
+        )
+    blocks["other-row"] = "\n".join(other_rows) or T_OTHER_ROW.format(
+        name="ничего не осталось — все позиции распределены по категориям",
+        qty="—",
+        total=base.money(0, currency),
+        share="—",
+    )
 
     steps = []
     for action in ai.get("actions", [])[:5]:

@@ -520,7 +520,7 @@ class PrivateCategoriesTests(unittest.TestCase):
     def test_config_defaults(self):
         self.assertEqual(
             _config.load_private_categories(Path("/nonexistent/config.json")),
-            ["Аптека и здоровье"],
+            ["Аптека и здоровье", "Косметика и гигиена"],
         )
 
     def test_config_custom_and_empty(self):
@@ -545,6 +545,60 @@ class PrivateCategoriesTests(unittest.TestCase):
         self.assertEqual(base_module.categorize_item("Приём врача, консультация"), "Аптека и здоровье")
         self.assertEqual(base_module.categorize_item("Табл. жаропонижающие N10"), "Аптека и здоровье")
         self.assertEqual(base_module.categorize_item("Молоко 3.2% 1л"), "Молочные продукты")
+
+    def test_new_categories_and_morphology(self):
+        cases = {
+            "Филе грудки куриное охлажденное": "Мясо и птица",
+            "Шея говяжья 400 г": "Мясо и птица",
+            "Нектарины 1кг": "Овощи и фрукты",
+            "Арбуз Чёрный принц": "Овощи и фрукты",
+            "Пельмени с говядиной": "Готовая еда",
+            "Кисель Чёрная смородина": "Напитки",
+            "Туалетная бумага 12 рулонов": "Бытовая химия",
+            "Пакеты для мусора 35 л": "Дом и ремонт",
+            "Лонгслив детский": "Одежда и обувь",
+            "Оплата услуг связи: 771500334634": "Связь и подписки",
+            "Подписка СберПрайм+": "Связь и подписки",
+            "Установка/замена счетчика ГВС, ХВС": "ЖКХ и услуги",
+            "Мастер на час, иные работы": "ЖКХ и услуги",
+            "Крем увлажняющий для лица": "Косметика и гигиена",
+            "Чемодан полипропилен 65 см": "Аксессуары",
+            "Зонт Механика": "Аксессуары",
+        }
+        for name, expected in cases.items():
+            self.assertEqual(base_module.categorize_item(name), expected, name)
+
+    def test_text_report_has_other_breakdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_long_item(db)  # длинное имя не матчится категориями → Прочее
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py", "--db", str(db), "--color", "never"
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("Разбор Прочего (рубли)", proc.stdout)
+            self.assertIn("Доля Прочего", proc.stdout)
+            self.assertIn(truncated_name(40), proc.stdout)
+
+    def test_html_report_has_other_breakdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            add_long_item(db)
+
+            proc = run_python(
+                REPORTS_DIR / "ai_report.py",
+                "--db", str(db), "--out-dir", str(out), "--no-ai",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            content = (out / "lkdr-2026-09.html").read_text(encoding="utf-8")
+            self.assertIn("Что осталось в Прочем", content)
+            self.assertIn("Доля Прочего", content)
 
     def test_lkdr_report_hides_private_items(self):
         with tempfile.TemporaryDirectory() as tmp:

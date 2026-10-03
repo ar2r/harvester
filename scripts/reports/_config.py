@@ -25,8 +25,8 @@ DEFAULT_AI_COMMAND = "codex exec --color never --sandbox read-only -"
 
 DEFAULT_MAX_ITEM_NAME_CHARS = 40
 # Категории, товары которых не выводятся в отчётах построчно (видна только
-# сумма по категории) — приватные покупки: аптечка, врачи, анализы.
-DEFAULT_PRIVATE_CATEGORIES = ["Аптека и здоровье"]
+# сумма по категории) — приватные покупки: аптечка, врачи, анализы, гигиена.
+DEFAULT_PRIVATE_CATEGORIES = ["Аптека и здоровье", "Косметика и гигиена"]
 
 CONFIG_KEY_SECTION = "ai"
 CONFIG_KEY_COMMAND = "command"

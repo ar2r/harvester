@@ -151,15 +151,21 @@ CATEGORY_RULES = (
         (
             "мясо",
             "курица",
+            "курин",
+            "цыплён",
             "цыплен",
+            "бройлер",
             "индейк",
             "говядина",
+            "говяж",
             "свинина",
+            "свин",
             "фарш",
             "котлет",
             "колбас",
             "сосиск",
             "ветчин",
+            "буженин",
         ),
     ),
     (
@@ -195,6 +201,11 @@ CATEGORY_RULES = (
             "апельсин",
             "мандарин",
             "ягод",
+            "нектарин",
+            "арбуз",
+            "дын",
+            "персик",
+            "виноград",
         ),
     ),
     (
@@ -207,6 +218,7 @@ CATEGORY_RULES = (
             "пирог",
             "круассан",
             "выпеч",
+            "медов",
         ),
     ),
     (
@@ -238,6 +250,7 @@ CATEGORY_RULES = (
             "морс",
             "лимонад",
             "напит",
+            "кисель",
         ),
     ),
     (
@@ -268,6 +281,10 @@ CATEGORY_RULES = (
             "яндекс еда",
             "delivery",
             "додо",
+            "пельмен",
+            "воппер",
+            "калифорни",
+            "наггетс",
         ),
     ),
     (
@@ -289,6 +306,11 @@ CATEGORY_RULES = (
             "мебель",
             "икеа",
             "леруа",
+            "мусор",
+            "форма для льда",
+            "чехол",
+            "герметик",
+            "полотенц",
         ),
     ),
     (
@@ -306,6 +328,7 @@ CATEGORY_RULES = (
             "ботин",
             "обув",
             "одежд",
+            "лонгслив",
             "omsа",
             "omsa",
         ),
@@ -325,6 +348,8 @@ CATEGORY_RULES = (
             "дезодорант",
             "салфет",
             "бумага туалет",
+            "туалетная бумага",
+            "для посудомоеч",
         ),
     ),
     (
@@ -377,6 +402,48 @@ CATEGORY_RULES = (
             "топливо",
             "парков",
             "проезд",
+        ),
+    ),
+    (
+        "Связь и подписки",
+        (
+            "услуг связи",
+            "услуги связи",
+            "подписк",
+        ),
+    ),
+    (
+        "ЖКХ и услуги",
+        (
+            "счетчик",
+            "гвс",
+            "хвс",
+            "мастер на час",
+            "жкх",
+        ),
+    ),
+    (
+        "Косметика и гигиена",
+        (
+            "крем",
+            "гель для умыв",
+            "тампон",
+            "прокладк",
+            "зубн",
+            "бритв",
+            "презерватив",
+        ),
+    ),
+    (
+        "Аксессуары",
+        (
+            "чемодан",
+            "зонт",
+            "ремешок",
+            "картридж",
+            "триммер",
+            "компрессор",
+            "насос",
         ),
     ),
     (
@@ -1125,6 +1192,52 @@ def run_report(
             ),
         )
         print()
+
+        other_total = current_category_totals.get("Прочее", 0.0)
+        previous_other_total = previous_category_totals.get("Прочее", 0.0)
+        if other_total > 0 or previous_other_total > 0:
+            print_header(f"Разбор Прочего ({currency_label})")
+            print(
+                COLOR.muted(
+                    f"Позиции, не попавшие ни в одну категорию: {money(other_total, currency)} "
+                    f"({percent(other_total, stats.total)} чистых расходов; "
+                    f"было {money(previous_other_total, currency)})"
+                )
+            )
+            other_rows = sorted(
+                (
+                    (name, value.quantity, value.total)
+                    for (item_currency, name), value in current.items.items()
+                    if item_currency == currency
+                    and value.total > 0
+                    and categorize_item(name) == "Прочее"
+                ),
+                key=lambda row: row[2],
+                reverse=True,
+            )
+            top_other_rows = other_rows[:top]
+            rest_total = sum(total for _, _, total in other_rows[top:])
+            rest_count = max(len(other_rows) - len(top_other_rows), 0)
+            print_table(
+                ("Позиция", "Кол-во", "Сейчас", "Доля Прочего"),
+                (
+                    (
+                        short_item(name) if name.strip() else "(без названия)",
+                        f"{quantity:.3g}",
+                        money(total, currency),
+                        share_bar(total, other_total),
+                    )
+                    for name, quantity, total in top_other_rows
+                ),
+            )
+            if rest_count:
+                print(
+                    COLOR.muted(
+                        f"и ещё {rest_count} позиций на {money(rest_total, currency)} "
+                        f"({percent(rest_total, other_total)} Прочего)"
+                    )
+                )
+            print()
 
         print_header(f"Главные изменения ({currency_label})")
         print(f"Топ-{top} изменений по магазинам")

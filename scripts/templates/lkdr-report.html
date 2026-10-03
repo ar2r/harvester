@@ -78,6 +78,7 @@
   <a href="#comparison">Было → стало</a>
   <a href="#analysis">AI-анализ</a>
   <a href="#structure">Категории</a>
+  <a href="#other">Прочее</a>
   <a href="#stores">Магазины</a>
   <a href="#habits">Покупки</a>
   <a href="#method">Методика</a>
@@ -380,6 +381,42 @@
     <summary>{{ details_summary }}</summary>
     <div><!-- полные списки категорий обоих периодов --></div>
   </details>
+</section>
+
+<!-- ======================= 03 / РАЗБОР ПРОЧЕГО ======================= -->
+<section id="other" class="section">
+  <div class="section-head">
+    <div>
+      <div class="eyebrow">Прозрачность остатка</div>
+      <h2>{{ other_breakdown_title }}</h2>
+    </div>
+    <small>{{ other_breakdown_note }}</small>
+  </div>
+  <div class="panel">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Позиция</th>
+            <th scope="col">Кол-во</th>
+            <th scope="col">Сейчас</th>
+            <th scope="col">Доля Прочего</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- block:other-row -->
+          <tr>
+            <td>{{ other_item_name }}</td>
+            <td class="num">{{ other_item_qty }}</td>
+            <td class="num">{{ other_item_total }}</td>
+            <td class="num">{{ other_item_share }}</td>
+          </tr>
+          <!-- /block:other-row -->
+        </tbody>
+      </table>
+    </div>
+    <p class="footnote">{{ other_breakdown_footnote }}</p>
+  </div>
 </section>
 
 <!-- ======================= 04 / НАКОПЛЕННЫЕ РАСХОДЫ ======================= -->
