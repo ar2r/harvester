@@ -10,6 +10,11 @@ type Credential struct {
 	Phone     string `yaml:"phone" pattern:"7\\d{10}" doc:"Номер телефона пользователя."`
 	DeviceID  string `yaml:"deviceId,omitempty" doc:"Используется для авторизации и обновления токена доступа.\n\nПри отсутствии генерируется автоматически из userAgent и номера телефона.\n\nМожно подсмотреть в браузере при попытке авторизации.\n\nОбратите внимание, что токены доступа привязаны к deviceId. При смене deviceId потребуется авторизоваться заново."`
 	UserAgent string `yaml:"userAgent,omitempty" doc:"Используется для авторизации и обновления токена доступа.\n\nМожно подсмотреть в браузере при попытке авторизации." default:"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"`
+	// FirstSyncMonths — за сколько последних месяцев скачивать чеки при
+	// первой синхронизации телефона. 0 — не задано: используется глобальный
+	// firstSyncFrom, а без него — 12 месяцев по умолчанию. Перекрывает
+	// глобальную настройку для этого пользователя.
+	FirstSyncMonths int `yaml:"firstSyncMonths,omitempty" doc:"За сколько последних месяцев скачивать чеки при первой синхронизации (только этого пользователя; по умолчанию 12). Перекрывает lkdr.firstSyncFrom."`
 }
 
 type Config struct {

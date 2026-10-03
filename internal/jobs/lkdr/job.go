@@ -34,9 +34,12 @@ type JobParams struct {
 }
 
 type Job struct {
-	users         map[string]map[string]Client
+	users map[string]map[string]Client
+	// firstSyncFrom — дата первой синхронизации на каждый телефон:
+	// per-user firstSyncMonths, глобальный firstSyncFrom или nil
+	// (тогда загрузчик берёт 12 месяцев по умолчанию).
+	firstSyncFrom map[string]*lkdr.Date
 	batchSize     int
-	firstSyncFrom *lkdr.Date
 	captchaSolver captcha.TokenProvider
 	db            database.DB
 }
@@ -77,10 +80,18 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}
 
 	users := make(map[string]map[string]Client)
+	firstSyncDates := make(map[string]*lkdr.Date)
 	for user, credentials := range params.Config.Users {
 		phones := make(map[string]Client)
 		users[user] = phones
 		for _, credential := range credentials {
+			syncFrom, err := firstSyncDateFor(params.Clock.Now(), firstSyncFrom, credential)
+			if err != nil {
+				return nil, errors.Wrapf(err, "user %s", user)
+			}
+
+			firstSyncDates[credential.Phone] = syncFrom
+
 			deviceID := credential.DeviceID
 			if deviceID == "" {
 				var err error
@@ -112,11 +123,26 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 
 	return &Job{
 		users:         users,
+		firstSyncFrom: firstSyncDates,
 		batchSize:     params.Config.BatchSize,
-		firstSyncFrom: firstSyncFrom,
 		captchaSolver: params.CaptchaSolver,
 		db:            db,
 	}, nil
+}
+
+// firstSyncDateFor решает, с какой даты качать чеки при первой синхронизации
+// телефона: настройка пользователя firstSyncMonths перекрывает глобальный
+// firstSyncFrom; nil — загрузчик возьмёт последние 12 месяцев.
+func firstSyncDateFor(now time.Time, global *lkdr.Date, credential Credential) (*lkdr.Date, error) {
+	if months := credential.FirstSyncMonths; months != 0 {
+		if months < 0 {
+			return nil, errors.Errorf("firstSyncMonths %d: must be positive", months)
+		}
+
+		return pointer.To(lkdr.Date(now.AddDate(0, -months, 0))), nil
+	}
+
+	return global, nil
 }
 
 func (j *Job) Info() jobs.Info {
@@ -151,7 +177,7 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 
 	var stack common.Stack[loaders.Interface]
 	stack.Push(
-		loaders.Receipts{Phone: phone, BatchSize: j.batchSize, FirstSyncFrom: j.firstSyncFrom},
+		loaders.Receipts{Phone: phone, BatchSize: j.batchSize, FirstSyncFrom: j.firstSyncFrom[phone]},
 		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize},
 	)
 

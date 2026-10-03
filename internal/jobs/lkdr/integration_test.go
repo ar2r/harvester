@@ -27,6 +27,8 @@ import (
 
 const testPhone = "79000000000"
 
+const testPhoneB = "79000000001"
+
 func integrationConfig(t *testing.T) (Config, string) {
 	t.Helper()
 
@@ -58,11 +60,11 @@ func openIntegrationDB(t *testing.T, dsn string) database.DB {
 	return db
 }
 
-func seedTokens(t *testing.T, dsn string) {
+func seedTokens(t *testing.T, dsn, name, phone string) {
 	t.Helper()
 
 	db := openIntegrationDB(t, dsn)
-	if err := db.Upsert(&User{Name: "a", Phone: testPhone}).Error; err != nil {
+	if err := db.Upsert(&User{Name: name, Phone: phone}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,7 +76,7 @@ func seedTokens(t *testing.T, dsn string) {
 	tokenExpiry := DateTimeTZ{DateTimeTZ: lkdr.DateTimeTZ(now.Add(7 * 24 * time.Hour))}
 
 	if err := db.Upsert(&Tokens{
-		UserPhone:             testPhone,
+		UserPhone:             phone,
 		RefreshToken:          "seed-refresh-token",
 		RefreshTokenExpiresIn: &refreshExpiry,
 		Token:                 "seeded-token",
@@ -130,7 +132,7 @@ func countRequests(requests []mocklkdr.Request, path string) int {
 func TestIntegrationJobLoadsReceiptsAndFiscalData(t *testing.T) {
 	cfg, dsn := integrationConfig(t)
 	job, server := newMockBackedJob(t, cfg, nil)
-	seedTokens(t, dsn)
+	seedTokens(t, dsn, "a", testPhone)
 
 	if err := job.Run(jobs.NewContext(context.Background(), discardLogger()), time.Now(), "a"); err != nil {
 		t.Fatalf("unexpected errors: %v", err)
@@ -267,7 +269,7 @@ func TestIntegrationJobAuthorizesAndPersistsTokens(t *testing.T) {
 func TestIntegrationJobIncrementalSyncStartsFromLatestReceipt(t *testing.T) {
 	cfg, dsn := integrationConfig(t)
 	job, server := newMockBackedJob(t, cfg, nil)
-	seedTokens(t, dsn)
+	seedTokens(t, dsn, "a", testPhone)
 
 	ctx := jobs.NewContext(context.Background(), discardLogger())
 	if err := job.Run(ctx, time.Now(), "a"); err != nil {
@@ -315,7 +317,7 @@ func TestIntegrationJobFirstSyncFromConfiguredDate(t *testing.T) {
 	cfg.FirstSyncFrom = "2020-01-01"
 
 	job, server := newMockBackedJob(t, cfg, nil)
-	seedTokens(t, dsn)
+	seedTokens(t, dsn, "a", testPhone)
 
 	if err := job.Run(jobs.NewContext(context.Background(), discardLogger()), time.Now(), "a"); err != nil {
 		t.Fatalf("unexpected errors: %v", err)
@@ -344,4 +346,81 @@ func TestIntegrationJobFirstSyncFromConfiguredDate(t *testing.T) {
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestIntegrationJobPerUserFirstSyncMonths(t *testing.T) {
+	cfg, dsn := integrationConfig(t)
+	cfg.FirstSyncFrom = "2020-01-01"
+	cfg.Users["b"] = []Credential{{Phone: testPhoneB, UserAgent: "integration-test-agent", FirstSyncMonths: 1}}
+
+	seedTokens(t, dsn, "a", testPhone)
+	seedTokens(t, dsn, "b", testPhoneB)
+
+	server := mocklkdr.New()
+	httpServer := httptest.NewServer(server.Handler())
+	t.Cleanup(httpServer.Close)
+
+	transport, err := NewRedirectTransport(httpServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Фиксированные часы: дата первой синхронизации b детерминирована.
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	job, err := NewJob(context.Background(), JobParams{
+		Config: cfg,
+		Clock:  based.ClockFunc(func() time.Time { return now }),
+		Logger: discardLogger(),
+		ClientFactory: func(params lkdr.ClientParams) (Client, error) {
+			params.Transport = transport
+			return defaultClientFactory(params)
+		},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := jobs.NewContext(context.Background(), discardLogger())
+
+	// Пользователь a без firstSyncMonths — глобальный firstSyncFrom.
+	if err := job.Run(ctx, now, "a"); err != nil {
+		t.Fatalf("unexpected errors: %v", err)
+	}
+
+	if got := lastReceiptDateFrom(t, server).Format("2006-01-02"); got != "2020-01-01" {
+		t.Fatalf("expected global firstSyncFrom 2020-01-01 for user a, got %s", got)
+	}
+
+	// Пользователь b с firstSyncMonths=1 — месяц назад от часов задачи,
+	// глобальная дата перекрыта настройкой пользователя.
+	server.Reset()
+	if err := job.Run(ctx, now, "b"); err != nil {
+		t.Fatalf("unexpected errors on second run: %v", err)
+	}
+
+	if got := lastReceiptDateFrom(t, server).Format("2006-01-02"); got != "2026-09-03" {
+		t.Fatalf("expected firstSyncMonths=1 date 2026-09-03 for user b, got %s", got)
+	}
+}
+
+func lastReceiptDateFrom(t *testing.T, server *mocklkdr.Server) time.Time {
+	t.Helper()
+
+	var last lkdr.ReceiptIn
+	for _, request := range server.Requests() {
+		if request.Path != "/api/v1/receipt" {
+			continue
+		}
+
+		if err := json.Unmarshal([]byte(request.Body), &last); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if last.DateFrom == nil {
+		t.Fatal("expected dateFrom in receipt requests")
+	}
+
+	return last.DateFrom.Time()
 }
