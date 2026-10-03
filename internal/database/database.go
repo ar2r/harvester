@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"reflect"
+	"strings"
 
 	"github.com/jfk9w-go/based"
 	"github.com/pkg/errors"
@@ -30,12 +32,43 @@ type DB struct {
 	*gorm.DB
 }
 
+// withSQLitePragmas дописывает в DSN параметры соединения, если пользователь
+// их не задал: WAL-журнал и busy_timeout убирают SQLITE_BUSY при параллельной
+// записи разных пользователей в одну базу.
+func withSQLitePragmas(dsn string) string {
+	base, query, _ := strings.Cut(dsn, "?")
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return dsn
+	}
+
+	defaults := map[string]string{
+		"_journal_mode": "WAL",
+		"_synchronous":  "NORMAL",
+		"_busy_timeout": "5000",
+	}
+
+	changed := false
+	for key, value := range defaults {
+		if values.Get(key) == "" {
+			values.Set(key, value)
+			changed = true
+		}
+	}
+
+	if !changed {
+		return dsn
+	}
+
+	return base + "?" + values.Encode()
+}
+
 func Open(ctx context.Context, params Params) (DB, error) {
 	if err := based.Validate(params); err != nil {
 		return DB{}, err
 	}
 
-	db, err := gorm.Open(sqlite.Open(params.Config.DSN), &gorm.Config{
+	db, err := gorm.Open(sqlite.Open(withSQLitePragmas(params.Config.DSN)), &gorm.Config{
 		NowFunc: params.Clock.Now,
 		Logger: slogLogger{
 			logger: params.Logger,

@@ -194,3 +194,42 @@ func TestTransactionRollsBackOnError(t *testing.T) {
 		t.Fatalf("expected rollback to drop the row, got %d rows", count)
 	}
 }
+
+func TestWithSQLitePragmas(t *testing.T) {
+	cases := []struct {
+		name, dsn, want string
+	}{
+		{
+			name: "plain path gets defaults",
+			dsn:  "lkdr.db",
+			want: "lkdr.db?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL",
+		},
+		{
+			name: "user pragma is not overridden",
+			dsn:  "lkdr.db?_journal_mode=DELETE",
+			want: "lkdr.db?_busy_timeout=5000&_journal_mode=DELETE&_synchronous=NORMAL",
+		},
+		{
+			name: "custom timeout is kept",
+			dsn:  "lkdr.db?_busy_timeout=10000",
+			want: "lkdr.db?_busy_timeout=10000&_journal_mode=WAL&_synchronous=NORMAL",
+		},
+		{
+			name: "already complete dsn is untouched",
+			dsn:  "lkdr.db?_busy_timeout=10000&_journal_mode=WAL&_synchronous=FULL",
+			want: "lkdr.db?_busy_timeout=10000&_journal_mode=WAL&_synchronous=FULL",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := withSQLitePragmas(c.dsn); got != c.want {
+				t.Fatalf("withSQLitePragmas(%q) = %q, want %q", c.dsn, got, c.want)
+			}
+		})
+	}
+
+	if got := withSQLitePragmas("lkdr.db?%garbage"); got != "lkdr.db?%garbage" {
+		t.Fatalf("expected broken query to leave dsn as is, got %q", got)
+	}
+}
