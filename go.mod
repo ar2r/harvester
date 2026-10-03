@@ -1,6 +1,6 @@
 module github.com/ar2r/ledger-fox
 
-go 1.26.0
+go 1.27.1
 
 require (
 	github.com/AlekSi/pointer v1.2.0
