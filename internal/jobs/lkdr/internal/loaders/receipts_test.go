@@ -108,6 +108,112 @@ func TestReceiptsBackfillSkippedWhenHistoryDeepEnough(t *testing.T) {
 	}
 }
 
+func TestReceiptsBackfillNotRepeatedForSameDepth(t *testing.T) {
+	db := testDB(t)
+	// История с 2026-01-01 всегда короче окна в 36 месяцев: без маркера
+	// каждый запуск перекачивал бы окно заново.
+	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
+
+	var dateFroms []time.Time
+	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		if in.DateFrom != nil {
+			dateFroms = append(dateFroms, in.DateFrom.Time())
+		}
+		return &lkdr.ReceiptOut{}, nil
+	}}
+
+	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36}
+
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("first load: unexpected errors: %v", errs)
+	}
+
+	expected36 := time.Now().AddDate(0, -36, 0)
+	if diff := dateFroms[0].Sub(expected36); diff < -24*time.Hour || diff > 24*time.Hour {
+		t.Fatalf("expected first backfill from ~36 months ago (%s), got %s", expected36, dateFroms[0])
+	}
+
+	var marker entities.SyncDepth
+	if err := db.Where("user_phone = ?", "79000000000").First(&marker).Error; err != nil {
+		t.Fatalf("expected sync depth marker after backfill: %v", err)
+	}
+
+	// Второй запуск с той же глубиной — инкремент от самого свежего чека.
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("second load: unexpected errors: %v", errs)
+	}
+
+	incremental := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
+	if !dateFroms[1].Equal(incremental) {
+		t.Fatalf("expected incremental dateFrom %s on second run, got %s", incremental, dateFroms[1])
+	}
+
+	// Увеличенная глубина глубже маркера — окно качается снова.
+	loader.MinDepthMonths = 60
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("deeper load: unexpected errors: %v", errs)
+	}
+
+	expected60 := time.Now().AddDate(0, -60, 0)
+	if diff := dateFroms[2].Sub(expected60); diff < -24*time.Hour || diff > 24*time.Hour {
+		t.Fatalf("expected deeper backfill from ~60 months ago (%s), got %s", expected60, dateFroms[2])
+	}
+
+	if err := db.Where("user_phone = ?", "79000000000").First(&marker).Error; err != nil {
+		t.Fatal(err)
+	}
+	if diff := marker.DepthFrom.Time().Sub(expected60); diff < -24*time.Hour || diff > 24*time.Hour {
+		t.Fatalf("expected marker at ~60 months ago (%s), got %s", expected60, marker.DepthFrom.Time())
+	}
+}
+
+func TestReceiptsMaxRequestsStopsPagination(t *testing.T) {
+	db := testDB(t)
+	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
+
+	page := &lkdr.ReceiptOut{HasMore: true}
+	var offsets []int
+	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		offsets = append(offsets, in.Offset)
+		return page, nil
+	}}
+
+	loader := Receipts{Phone: "79000000000", BatchSize: 2, MaxRequests: 1}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("expected limit stop to be a success, got %v", errs)
+	}
+
+	if len(offsets) != 1 || offsets[0] != 0 {
+		t.Fatalf("expected exactly 1 api call at offset 0, got %v", offsets)
+	}
+}
+
+func TestReceiptsBackfillMarkerSkippedWhenLimited(t *testing.T) {
+	db := testDB(t)
+	// История короче окна в 36 месяцев — запускается докачка вглубь,
+	// но лимит в 1 запрос прерывает её: маркер ставиться не должен,
+	// иначе следующий запуск посчитал бы окно перекачанным.
+	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
+
+	client := &fakeClient{receiptFn: func(*lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		return &lkdr.ReceiptOut{HasMore: true}, nil
+	}}
+
+	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36, MaxRequests: 1}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("expected limit stop to be a success, got %v", errs)
+	}
+
+	var count int64
+	if err := db.Model(new(entities.SyncDepth)).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected no sync depth marker after limited backfill, got %d", count)
+	}
+}
+
 func TestReceiptsIncrementalFromLatestReceiveDate(t *testing.T) {
 	db := testDB(t)
 	// seedReceipts создаёт чеки от базы 2026-01-01 00:00 UTC с шагом в час:

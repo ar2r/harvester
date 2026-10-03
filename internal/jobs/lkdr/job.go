@@ -44,8 +44,11 @@ type Job struct {
 	// накопленная история короче окна (0 — не задана).
 	firstSyncMonths map[string]int
 	batchSize       int
-	captchaSolver   captcha.TokenProvider
-	db              database.DB
+	// maxRequests — ограничитель запросов выгрузки за запуск на загрузчик
+	// (lkdr.maxRequests); 0 — без ограничения.
+	maxRequests   int
+	captchaSolver captcha.TokenProvider
+	db            database.DB
 }
 
 func NewJob(ctx context.Context, params JobParams) (*Job, error) {
@@ -60,6 +63,10 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	firstSyncFrom, err := parseFirstSyncFrom(params.Config.FirstSyncFrom)
 	if err != nil {
 		return nil, err
+	}
+
+	if params.Config.MaxRequests < 0 {
+		return nil, errors.Errorf("lkdr.maxRequests %d: must not be negative", params.Config.MaxRequests)
 	}
 
 	db, err := database.Open(ctx, database.Params{
@@ -132,6 +139,7 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 		firstSyncFrom:   firstSyncDates,
 		firstSyncMonths: firstSyncMonths,
 		batchSize:       params.Config.BatchSize,
+		maxRequests:     params.Config.MaxRequests,
 		captchaSolver:   params.CaptchaSolver,
 		db:              db,
 	}, nil
@@ -196,8 +204,9 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 			BatchSize:      j.batchSize,
 			FirstSyncFrom:  j.firstSyncFrom[phone],
 			MinDepthMonths: j.firstSyncMonths[phone],
+			MaxRequests:    j.maxRequests,
 		},
-		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize},
+		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize, MaxRequests: j.maxRequests},
 	)
 
 	for {

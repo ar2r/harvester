@@ -17,6 +17,10 @@ const maxUnavailableFiscalDataSkips = 5
 type FiscalData struct {
 	Phone     string
 	BatchSize int
+	// MaxRequests — максимум запросов фискальных данных к API за запуск;
+	// 0 — без ограничения. Остановка по лимиту — не ошибка: следующий
+	// запуск продолжит с первого чека без деталей.
+	MaxRequests int
 }
 
 func (l FiscalData) TableName() string {
@@ -28,9 +32,10 @@ func (l FiscalData) Load(ctx jobs.Context, client Client, db database.DB) (_ []I
 		Key:  "offset",
 		Size: l.BatchSize,
 	}.Run(ctx, (&fiscalDataBatch{
-		phone:  l.Phone,
-		client: client,
-		db:     db,
+		phone:       l.Phone,
+		client:      client,
+		db:          db,
+		maxRequests: l.MaxRequests,
 	}).load)
 }
 
@@ -39,6 +44,8 @@ type fiscalDataBatch struct {
 	client               Client
 	db                   database.DB
 	unavailableDataSkips int
+	maxRequests          int
+	requests             int
 }
 
 func (l *fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset *int, errs error) {
@@ -68,7 +75,13 @@ func (l *fiscalDataBatch) load(ctx jobs.Context, offset, limit int) (nextOffset 
 		key := pendingReceipt.Key
 		ctx := ctx.With("key", key)
 
+		if l.maxRequests > 0 && l.requests >= l.maxRequests {
+			ctx.Warn("загрузка остановлена по лимиту запросов", "max", l.maxRequests)
+			return
+		}
+
 		out, err := l.client.FiscalData(ctx, &lkdr.FiscalDataIn{Key: key})
+		l.requests++
 		if err != nil {
 			if lkdr.IsDataNotFound(err) {
 				ctx.Warn("fiscal data not found", logs.Error(err))

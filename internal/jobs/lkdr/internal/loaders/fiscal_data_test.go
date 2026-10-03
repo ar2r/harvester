@@ -49,7 +49,7 @@ func testDB(t *testing.T) database.DB {
 		Config: database.Config{
 			DSN: filepath.Join(t.TempDir(), "test.db"),
 		},
-		Entities: []any{new(entities.User), new(entities.Brand), new(entities.Receipt), new(entities.FiscalData), new(entities.FiscalDataItem)},
+		Entities: []any{new(entities.User), new(entities.Brand), new(entities.Receipt), new(entities.FiscalData), new(entities.FiscalDataItem), new(entities.SyncDepth)},
 	})
 
 	if err != nil {
@@ -131,5 +131,24 @@ func TestFiscalDataAbortsWhenUnavailableReceiptsExceedLimit(t *testing.T) {
 
 	if client.fiscalDataCalls != 6 {
 		t.Fatalf("expected 6 api calls (5 skipped + 1 failed), got %d", client.fiscalDataCalls)
+	}
+}
+
+func TestFiscalDataMaxRequestsLimitsApiCalls(t *testing.T) {
+	db := testDB(t)
+	phone := "79000000000"
+	seedReceipts(t, db, phone, "k1", "k2", "k3", "k4", "k5")
+
+	client := &fakeClient{fiscalDataFn: func(string) (*lkdr.FiscalDataOut, error) {
+		return &lkdr.FiscalDataOut{}, nil
+	}}
+
+	loader := FiscalData{Phone: phone, BatchSize: 100, MaxRequests: 2}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("expected limit stop to be a success, got %v", errs)
+	}
+
+	if client.fiscalDataCalls != 2 {
+		t.Fatalf("expected exactly 2 api calls, got %d", client.fiscalDataCalls)
 	}
 }

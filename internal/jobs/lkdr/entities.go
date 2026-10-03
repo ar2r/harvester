@@ -11,4 +11,5 @@ var entities = []any{
 	new(Receipt),
 	new(FiscalData),
 	new(FiscalDataItem),
+	new(SyncDepth),
 }

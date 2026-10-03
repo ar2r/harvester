@@ -2,11 +2,13 @@ package loaders
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
+	"gorm.io/gorm"
 
 	"github.com/jfk9w/hoarder/internal/database"
 	"github.com/jfk9w/hoarder/internal/jobs"
@@ -22,9 +24,14 @@ type Receipts struct {
 	FirstSyncFrom *lkdr.Date
 	// MinDepthMonths — желаемая глубина истории в месяцах (firstSyncMonths
 	// пользователя). 0 — не задана. Если накопленных чеков меньше этого окна,
-	// инкрементальный запуск extends dateFrom вглубь и докачивает старые чеки;
-	// пересечение с уже сохранённым безвредно из-за UPSERT.
+	// запуск один раз докачивает старые чеки от now-N месяцев и запоминает
+	// границу в sync_depths; повторная перекачка того же окна выполняется
+	// только при увеличении глубины (backfill MONTHS больше прежней).
 	MinDepthMonths int
+	// MaxRequests — максимум запросов выгрузки (страниц чеков) за запуск;
+	// 0 — без ограничения. Остановка по лимиту — не ошибка: маркер глубины
+	// при этом не ставится, и следующий запуск повторит докачку.
+	MaxRequests int
 }
 
 func (l Receipts) TableName() string {
@@ -54,15 +61,36 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 
 	now := time.Now()
 	var dateFrom *lkdr.Date
+	var backfillFrom *time.Time
 	switch {
 	case newest.Valid:
 		// Инкремент от самого свежего чека; при заданной глубине истории
-		// докачиваем вглубь, если накопленное короче запрошенного окна.
+		// докачиваем вглубь, если накопленное короче запрошенного окна
+		// и окно глубже уже отработанного.
 		dateFrom = pointer.To(lkdr.Date(newest.Time))
 		if l.MinDepthMonths > 0 {
 			depthFrom := now.AddDate(0, -l.MinDepthMonths, 0)
 			if !oldest.Valid || oldest.Time.After(depthFrom) {
-				dateFrom = pointer.To(lkdr.Date(depthFrom))
+				needBackfill := true
+				var marker entities.SyncDepth
+				err := db.WithContext(ctx).
+					Where("user_phone = ?", l.Phone).
+					First(&marker).Error
+				switch {
+				case err == nil:
+					// Окно вглубь до этой границы уже перекачано.
+					needBackfill = marker.DepthFrom.Time().After(depthFrom)
+				case errors.Is(err, gorm.ErrRecordNotFound):
+				default:
+					if ctx.Error(&errs, err, "failed to select sync depth marker") {
+						return
+					}
+				}
+
+				if needBackfill {
+					dateFrom = pointer.To(lkdr.Date(depthFrom))
+					backfillFrom = &depthFrom
+				}
 			}
 		}
 	case l.FirstSyncFrom != nil:
@@ -72,15 +100,42 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 		dateFrom = pointer.To(lkdr.Date(now.AddDate(-1, 0, 0)))
 	}
 
-	return nil, jobs.Batch[int]{
+	batch := &receiptsBatch{
+		phone:       l.Phone,
+		client:      client,
+		db:          db,
+		dateFrom:    dateFrom,
+		maxRequests: l.MaxRequests,
+	}
+	batchErr := jobs.Batch[int]{
 		Key:  "offset",
 		Size: l.BatchSize,
-	}.Run(ctx, receiptsBatch{
-		phone:    l.Phone,
-		client:   client,
-		db:       db,
-		dateFrom: dateFrom,
-	}.load)
+	}.Run(ctx, batch.load)
+	if batchErr != nil {
+		return nil, batchErr
+	}
+
+	if batch.limited {
+		ctx.Warn("загрузка остановлена по лимиту запросов",
+			"max", l.MaxRequests,
+			"loaded_pages", batch.requests)
+		return
+	}
+
+	if backfillFrom != nil {
+		marker := &entities.SyncDepth{
+			UserPhone: l.Phone,
+			DepthFrom: entities.DateTime{DateTime: lkdr.DateTime(*backfillFrom)},
+		}
+
+		if err := db.WithContext(ctx).
+			Upsert(marker).
+			Error; ctx.Error(&errs, err, "failed to save sync depth marker") {
+			return
+		}
+	}
+
+	return
 }
 
 type receiptsBatch struct {
@@ -88,9 +143,19 @@ type receiptsBatch struct {
 	client   Client
 	db       database.DB
 	dateFrom *lkdr.Date
+	// maxRequests — лимит запросов выгрузки за запуск (0 — без лимита);
+	// requests — счётчик сделанных запросов, limited — остановка по лимиту.
+	maxRequests int
+	requests    int
+	limited     bool
 }
 
-func (l receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffset *int, errs error) {
+func (l *receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffset *int, errs error) {
+	if l.maxRequests > 0 && l.requests >= l.maxRequests {
+		l.limited = true
+		return
+	}
+
 	in := &lkdr.ReceiptIn{
 		DateFrom: l.dateFrom,
 		OrderBy:  "RECEIVE_DATE:ASC",
@@ -99,6 +164,7 @@ func (l receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffset
 	}
 
 	out, err := l.client.Receipt(ctx, in)
+	l.requests++
 	if err != nil {
 		msg := "failed to get data from api"
 		if strings.Contains(err.Error(), "Внутреняя ошибка. Попробуйте еще раз") {
