@@ -39,6 +39,16 @@ func (r *Registry) Register(trigger Interface) {
 	r.triggers = append(r.triggers, trigger)
 }
 
+// Info возвращает идентификаторы зарегистрированных триггеров.
+func (r *Registry) Info() []string {
+	ids := make([]string, len(r.triggers))
+	for i, trigger := range r.triggers {
+		ids[i] = trigger.ID()
+	}
+
+	return ids
+}
+
 func (r *Registry) Run(ctx context.Context, job Jobs) {
 	for _, trigger := range r.triggers {
 		log := r.log.With("trigger", trigger.ID())
