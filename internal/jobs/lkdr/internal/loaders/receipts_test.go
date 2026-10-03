@@ -162,3 +162,33 @@ func TestReceiptsSkipsKnownAPIError(t *testing.T) {
 		t.Fatalf("expected known internal api error to be skipped, got: %v", errs)
 	}
 }
+
+func TestReceiptsFailsOnGenericAPIError(t *testing.T) {
+	db := testDB(t)
+	client := &fakeClient{receiptFn: func(*lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		return nil, errors.New("context deadline exceeded")
+	}}
+
+	if _, errs := (Receipts{Phone: "79000000000", BatchSize: 100}).Load(testJobsContext(), client, db); errs == nil {
+		t.Fatal("expected generic api error to fail the loader")
+	}
+}
+
+func TestReceiptsStopsWhenNoMorePages(t *testing.T) {
+	db := testDB(t)
+
+	var calls int
+	client := &fakeClient{receiptFn: func(*lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		calls++
+		// Последняя страница без hasMore.
+		return &lkdr.ReceiptOut{HasMore: false}, nil
+	}}
+
+	if _, errs := (Receipts{Phone: "79000000000", BatchSize: 10}).Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	if calls != 1 {
+		t.Fatalf("expected single page request, got %d", calls)
+	}
+}

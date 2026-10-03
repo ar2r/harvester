@@ -2,6 +2,7 @@ package loaders
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -150,5 +151,109 @@ func TestFiscalDataMaxRequestsLimitsApiCalls(t *testing.T) {
 
 	if client.fiscalDataCalls != 2 {
 		t.Fatalf("expected exactly 2 api calls, got %d", client.fiscalDataCalls)
+	}
+}
+
+func TestFiscalDataSkipsNotFound(t *testing.T) {
+	db := testDB(t)
+	phone := "79000000000"
+	seedReceipts(t, db, phone, "k1", "k2", "k3")
+
+	client := &fakeClient{fiscalDataFn: func(key string) (*lkdr.FiscalDataOut, error) {
+		if key == "k2" {
+			return nil, lkdr.Error{
+				Code:    lkdr.ReceiptFiscalDataNotFound,
+				Message: "no fiscal data",
+			}
+		}
+
+		return &lkdr.FiscalDataOut{}, nil
+	}}
+
+	loader := FiscalData{Phone: phone, BatchSize: 100}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("expected not-found to be skipped, got %v", errs)
+	}
+
+	var count int64
+	if err := db.Model(new(entities.FiscalData)).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected 2 fiscal data records (k2 skipped), got %d", count)
+	}
+}
+
+func TestFiscalDataSkipsKnownAPIErrorAndContinues(t *testing.T) {
+	db := testDB(t)
+	phone := "79000000000"
+	seedReceipts(t, db, phone, "k1", "k2")
+
+	var calls int
+	client := &fakeClient{fiscalDataFn: func(string) (*lkdr.FiscalDataOut, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("lkdr: Внутреняя ошибка. Попробуйте еще раз")
+		}
+
+		return &lkdr.FiscalDataOut{}, nil
+	}}
+
+	loader := FiscalData{Phone: phone, BatchSize: 100}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("expected known internal api error to be skipped, got %v", errs)
+	}
+
+	if calls != 2 {
+		t.Fatalf("expected loader to continue after known error, got %d calls", calls)
+	}
+}
+
+func TestFiscalDataAbortsOnGenericError(t *testing.T) {
+	db := testDB(t)
+	phone := "79000000000"
+	seedReceipts(t, db, phone, "k1", "k2", "k3")
+
+	client := &fakeClient{fiscalDataFn: func(string) (*lkdr.FiscalDataOut, error) {
+		return nil, errors.New("connection reset by peer")
+	}}
+
+	loader := FiscalData{Phone: phone, BatchSize: 100}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs == nil {
+		t.Fatal("expected generic api error to fail the loader")
+	}
+
+	// Остановка на первом чеке: k2 и k3 не запрашиваются.
+	if client.fiscalDataCalls != 1 {
+		t.Fatalf("expected loader to stop after first error, got %d calls", client.fiscalDataCalls)
+	}
+}
+
+func TestFiscalDataPaginatesPendingReceipts(t *testing.T) {
+	db := testDB(t)
+	phone := "79000000000"
+	seedReceipts(t, db, phone, "k1", "k2", "k3", "k4")
+
+	client := &fakeClient{fiscalDataFn: func(string) (*lkdr.FiscalDataOut, error) {
+		return &lkdr.FiscalDataOut{}, nil
+	}}
+
+	loader := FiscalData{Phone: phone, BatchSize: 2}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	if client.fiscalDataCalls != 4 {
+		t.Fatalf("expected 4 api calls across pages, got %d", client.fiscalDataCalls)
+	}
+
+	var count int64
+	if err := db.Model(new(entities.FiscalData)).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if count != 4 {
+		t.Fatalf("expected 4 fiscal data records, got %d", count)
 	}
 }
