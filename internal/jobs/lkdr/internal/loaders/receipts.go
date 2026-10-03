@@ -20,6 +20,11 @@ type Receipts struct {
 	// FirstSyncFrom — дата, с которой загружать чеки при первой синхронизации
 	// (в базе ещё нет чеков этого телефона). nil — последние 12 месяцев.
 	FirstSyncFrom *lkdr.Date
+	// MinDepthMonths — желаемая глубина истории в месяцах (firstSyncMonths
+	// пользователя). 0 — не задана. Если накопленных чеков меньше этого окна,
+	// инкрементальный запуск extends dateFrom вглубь и докачивает старые чеки;
+	// пересечение с уже сохранённым безвредно из-за UPSERT.
+	MinDepthMonths int
 }
 
 func (l Receipts) TableName() string {
@@ -27,27 +32,44 @@ func (l Receipts) TableName() string {
 }
 
 func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Interface, errs error) {
-	var from sql.NullTime
-	if err := db.WithContext(ctx).
-		Model(new(entities.Receipt)).
-		Select("receive_date").
-		Where("user_phone = ?", l.Phone).
-		Order("receive_date desc").
-		Limit(1).
-		Scan(&from).
-		Error; ctx.Error(&errs, err, "failed to select latest date") {
-		return
+	var oldest, newest sql.NullTime
+	for _, probe := range []struct {
+		order string
+		dest  *sql.NullTime
+	}{
+		{"receive_date asc", &oldest},
+		{"receive_date desc", &newest},
+	} {
+		if err := db.WithContext(ctx).
+			Model(new(entities.Receipt)).
+			Select("receive_date").
+			Where("user_phone = ?", l.Phone).
+			Order(probe.order).
+			Limit(1).
+			Scan(probe.dest).
+			Error; ctx.Error(&errs, err, "failed to select date range") {
+			return
+		}
 	}
 
+	now := time.Now()
 	var dateFrom *lkdr.Date
 	switch {
-	case from.Valid:
-		dateFrom = pointer.To(lkdr.Date(from.Time))
+	case newest.Valid:
+		// Инкремент от самого свежего чека; при заданной глубине истории
+		// докачиваем вглубь, если накопленное короче запрошенного окна.
+		dateFrom = pointer.To(lkdr.Date(newest.Time))
+		if l.MinDepthMonths > 0 {
+			depthFrom := now.AddDate(0, -l.MinDepthMonths, 0)
+			if !oldest.Valid || oldest.Time.After(depthFrom) {
+				dateFrom = pointer.To(lkdr.Date(depthFrom))
+			}
+		}
 	case l.FirstSyncFrom != nil:
 		dateFrom = l.FirstSyncFrom
 	default:
 		// Limit to last 12 months for the initial sync
-		dateFrom = pointer.To(lkdr.Date(time.Now().AddDate(-1, 0, 0)))
+		dateFrom = pointer.To(lkdr.Date(now.AddDate(-1, 0, 0)))
 	}
 
 	return nil, jobs.Batch[int]{

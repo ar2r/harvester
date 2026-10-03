@@ -39,9 +39,13 @@ type Job struct {
 	// per-user firstSyncMonths, глобальный firstSyncFrom или nil
 	// (тогда загрузчик берёт 12 месяцев по умолчанию).
 	firstSyncFrom map[string]*lkdr.Date
-	batchSize     int
-	captchaSolver captcha.TokenProvider
-	db            database.DB
+	// firstSyncMonths — желаемая глубина истории на каждый телефон:
+	// при инкрементальных запусках докачивает старые чеки, если
+	// накопленная история короче окна (0 — не задана).
+	firstSyncMonths map[string]int
+	batchSize       int
+	captchaSolver   captcha.TokenProvider
+	db              database.DB
 }
 
 func NewJob(ctx context.Context, params JobParams) (*Job, error) {
@@ -81,6 +85,7 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 
 	users := make(map[string]map[string]Client)
 	firstSyncDates := make(map[string]*lkdr.Date)
+	firstSyncMonths := make(map[string]int)
 	for user, credentials := range params.Config.Users {
 		phones := make(map[string]Client)
 		users[user] = phones
@@ -91,6 +96,7 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 			}
 
 			firstSyncDates[credential.Phone] = syncFrom
+			firstSyncMonths[credential.Phone] = credential.FirstSyncMonths
 
 			deviceID := credential.DeviceID
 			if deviceID == "" {
@@ -122,11 +128,12 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}
 
 	return &Job{
-		users:         users,
-		firstSyncFrom: firstSyncDates,
-		batchSize:     params.Config.BatchSize,
-		captchaSolver: params.CaptchaSolver,
-		db:            db,
+		users:           users,
+		firstSyncFrom:   firstSyncDates,
+		firstSyncMonths: firstSyncMonths,
+		batchSize:       params.Config.BatchSize,
+		captchaSolver:   params.CaptchaSolver,
+		db:              db,
 	}, nil
 }
 
@@ -177,7 +184,12 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 
 	var stack common.Stack[loaders.Interface]
 	stack.Push(
-		loaders.Receipts{Phone: phone, BatchSize: j.batchSize, FirstSyncFrom: j.firstSyncFrom[phone]},
+		loaders.Receipts{
+			Phone:          phone,
+			BatchSize:      j.batchSize,
+			FirstSyncFrom:  j.firstSyncFrom[phone],
+			MinDepthMonths: j.firstSyncMonths[phone],
+		},
 		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize},
 	)
 

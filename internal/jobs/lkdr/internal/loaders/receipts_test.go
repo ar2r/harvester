@@ -58,6 +58,56 @@ func TestReceiptsFirstSyncFromConfiguredDate(t *testing.T) {
 	}
 }
 
+func TestReceiptsBackfillExtendsToConfiguredDepth(t *testing.T) {
+	db := testDB(t)
+	// k1 — 00:00, k2 — 01:00, k3 — 02:00 от базы 2026-01-01: история
+	// короче запрошенных 36 месяцев — загрузка должна уйти вглубь от now.
+	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
+
+	var dateFrom *lkdr.Date
+	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		dateFrom = in.DateFrom
+		return &lkdr.ReceiptOut{}, nil
+	}}
+
+	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	if dateFrom == nil {
+		t.Fatal("expected dateFrom for backfill sync")
+	}
+
+	expected := time.Now().AddDate(0, -36, 0)
+	if diff := dateFrom.Time().Sub(expected); diff < -24*time.Hour || diff > 24*time.Hour {
+		t.Fatalf("expected backfill from ~36 months ago (%s), got %s", expected, dateFrom.Time())
+	}
+}
+
+func TestReceiptsBackfillSkippedWhenHistoryDeepEnough(t *testing.T) {
+	db := testDB(t)
+	// История с 2026-01-01 — глубже окна в 1 месяц: обычный инкремент
+	// от самого свежего чека, без перечитывания окна.
+	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
+
+	var dateFrom *lkdr.Date
+	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
+		dateFrom = in.DateFrom
+		return &lkdr.ReceiptOut{}, nil
+	}}
+
+	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 1}
+	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	expected := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
+	if dateFrom == nil || !dateFrom.Time().Equal(expected) {
+		t.Fatalf("expected incremental dateFrom %s, got %v", expected, dateFrom)
+	}
+}
+
 func TestReceiptsIncrementalFromLatestReceiveDate(t *testing.T) {
 	db := testDB(t)
 	// seedReceipts создаёт чеки от базы 2026-01-01 00:00 UTC с шагом в час:

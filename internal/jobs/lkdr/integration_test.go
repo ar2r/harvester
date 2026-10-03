@@ -348,6 +348,54 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestIntegrationJobBackfillsConfiguredDepth(t *testing.T) {
+	cfg, dsn := integrationConfig(t)
+	seedTokens(t, dsn, "a", testPhone)
+
+	// Первый прогон наполняет базу тремя чеками сентября 2026.
+	job, _ := newMockBackedJob(t, cfg, nil)
+	ctx := jobs.NewContext(context.Background(), discardLogger())
+	if err := job.Run(ctx, time.Now(), "a"); err != nil {
+		t.Fatalf("unexpected errors: %v", err)
+	}
+
+	// Глубина истории меняется на 36 месяцев: накопленное (сентябрь 2026)
+	// короче окна при now = 2026-10-03 → следующий запуск должен тянуть
+	// с 2023-10-03, а не инкрементально с самого свежего чека.
+	cfg.Users["a"] = []Credential{{Phone: testPhone, UserAgent: "integration-test-agent", FirstSyncMonths: 36}}
+
+	server := mocklkdr.New()
+	httpServer := httptest.NewServer(server.Handler())
+	t.Cleanup(httpServer.Close)
+
+	transport, err := NewRedirectTransport(httpServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	deepJob, err := NewJob(context.Background(), JobParams{
+		Config: cfg,
+		Clock:  based.ClockFunc(func() time.Time { return now }),
+		Logger: discardLogger(),
+		ClientFactory: func(params lkdr.ClientParams) (Client, error) {
+			params.Transport = transport
+			return defaultClientFactory(params)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deepJob.Run(ctx, now, "a"); err != nil {
+		t.Fatalf("unexpected errors on backfill run: %v", err)
+	}
+
+	if got := lastReceiptDateFrom(t, server).Format("2006-01-02"); got != "2023-10-03" {
+		t.Fatalf("expected backfill dateFrom 2023-10-03 (now - 36 months), got %s", got)
+	}
+}
+
 func TestIntegrationJobPerUserFirstSyncMonths(t *testing.T) {
 	cfg, dsn := integrationConfig(t)
 	cfg.FirstSyncFrom = "2020-01-01"
