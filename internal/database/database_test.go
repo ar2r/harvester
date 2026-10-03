@@ -2,9 +2,11 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jfk9w-go/based"
@@ -115,7 +117,7 @@ func TestUpsertCompositePrimaryKey(t *testing.T) {
 	}
 }
 
-func TestUpsertInBatchesIsIdempotent(t *testing.T) {
+func TestUpsertSliceIsIdempotent(t *testing.T) {
 	db, err := Open(context.Background(), testParams(t))
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +133,7 @@ func TestUpsertInBatchesIsIdempotent(t *testing.T) {
 
 	// Повторная загрузка того же окна данных не должна создавать дубли.
 	for _, name := range []string{"first-pass", "second-pass"} {
-		if err := db.UpsertInBatches(batch(name), 2).Error; err != nil {
+		if err := db.Upsert(batch(name)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -165,6 +167,26 @@ func TestUpsertPanicsOnNonStruct(t *testing.T) {
 	}()
 
 	_ = db.Upsert(42)
+}
+
+func TestUpsertPanicsWithFriendlyMessageOnEmptySlice(t *testing.T) {
+	db, err := Open(context.Background(), testParams(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for empty slice upsert value")
+		}
+
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "expected struct") {
+			t.Fatalf("expected friendly panic message, got %q", msg)
+		}
+	}()
+
+	_ = db.Upsert([]testRow{})
 }
 
 func TestTransactionRollsBackOnError(t *testing.T) {

@@ -8,7 +8,6 @@ LKDR_FORMAT ?= text
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
 CONFIG_FILE ?= ./config.json
-MONTHS ?= 36
 REPORT_ARGS ?=
 AI_REPORT_ARGS ?=
 

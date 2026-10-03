@@ -15,13 +15,14 @@ import (
 func TestReceiptsInitialSyncLimitsToTwelveMonths(t *testing.T) {
 	db := testDB(t)
 
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	var dateFrom *lkdr.Date
 	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
 		dateFrom = in.DateFrom
 		return &lkdr.ReceiptOut{}, nil
 	}}
 
-	if _, errs := (Receipts{Phone: "79000000000", BatchSize: 100}).Load(testJobsContext(), client, db); errs != nil {
+	if _, errs := (Receipts{Phone: "79000000000", BatchSize: 100, Now: now}).Load(testJobsContext(), client, db); errs != nil {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
 
@@ -29,9 +30,9 @@ func TestReceiptsInitialSyncLimitsToTwelveMonths(t *testing.T) {
 		t.Fatal("expected dateFrom for initial sync")
 	}
 
-	expected := time.Now().AddDate(-1, 0, 0)
-	if diff := dateFrom.Time().Sub(expected); diff < -time.Hour || diff > time.Hour {
-		t.Fatalf("expected initial sync from ~12 months ago (%s), got %s", expected, dateFrom.Time())
+	expected := now.AddDate(-1, 0, 0)
+	if !dateFrom.Time().Equal(expected) {
+		t.Fatalf("expected initial sync from %s, got %s", expected, dateFrom.Time())
 	}
 }
 

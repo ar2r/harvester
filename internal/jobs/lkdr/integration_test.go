@@ -315,24 +315,3 @@ func TestIntegrationJobIncrementalSyncStartsFromLatestReceipt(t *testing.T) {
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
-
-func lastReceiptDateFrom(t *testing.T, server *mocklkdr.Server) time.Time {
-	t.Helper()
-
-	var last lkdr.ReceiptIn
-	for _, request := range server.Requests() {
-		if request.Path != "/api/v1/receipt" {
-			continue
-		}
-
-		if err := json.Unmarshal([]byte(request.Body), &last); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if last.DateFrom == nil {
-		t.Fatal("expected dateFrom in receipt requests")
-	}
-
-	return last.DateFrom.Time()
-}

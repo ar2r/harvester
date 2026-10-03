@@ -126,7 +126,7 @@ func (j *Job) Info() jobs.Info {
 	}
 }
 
-func (j *Job) Run(ctx jobs.Context, _ time.Time, userID string) (errs error) {
+func (j *Job) Run(ctx jobs.Context, now time.Time, userID string) (errs error) {
 	phones := j.users[userID]
 	if phones == nil {
 		return jobs.ErrJobUnconfigured
@@ -135,14 +135,14 @@ func (j *Job) Run(ctx jobs.Context, _ time.Time, userID string) (errs error) {
 	ctx = ctx.ApplyAskFn(withAuthorizer(j.captchaSolver))
 	for phone, client := range phones {
 		ctx := ctx.With("phone", phone)
-		err := j.executeLoaders(ctx, userID, phone, client)
+		err := j.executeLoaders(ctx, userID, phone, client, now)
 		_ = multierr.AppendInto(&errs, err)
 	}
 
 	return
 }
 
-func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Client) (errs error) {
+func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Client, now time.Time) (errs error) {
 	if err := j.db.WithContext(ctx).
 		Upsert(&User{Name: userID, Phone: phone}).
 		Error; ctx.Error(&errs, err, "failed to create user in db") {
@@ -155,6 +155,7 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 			Phone:       phone,
 			BatchSize:   j.batchSize,
 			MaxRequests: j.maxRequests,
+			Now:         now,
 		},
 		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize, MaxRequests: j.maxRequests},
 	)

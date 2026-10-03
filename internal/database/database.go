@@ -108,10 +108,6 @@ func (db DB) Upsert(value any) *gorm.DB {
 	return db.Clauses(extractUpsertClause(value)).Create(value)
 }
 
-func (db DB) UpsertInBatches(value any, batchSize int) *gorm.DB {
-	return db.Clauses(extractUpsertClause(value)).CreateInBatches(value, batchSize)
-}
-
 func extractUpsertClause(entity any) clause.OnConflict {
 	value := reflect.ValueOf(entity)
 loop:
@@ -120,14 +116,16 @@ loop:
 		case reflect.Ptr:
 			value = value.Elem()
 		case reflect.Slice:
+			// Пустой слайс не содержит типа элементов — до Upsert
+			// добираются только с непустым (см. вызовы с len(...) > 0).
+			if value.Len() == 0 {
+				break loop
+			}
+
 			value = value.Index(0)
 		default:
 			break loop
 		}
-	}
-
-	for value.Kind() == reflect.Ptr || value.Kind() == reflect.Slice {
-		value = value.Elem()
 	}
 
 	if value.Kind() != reflect.Struct {

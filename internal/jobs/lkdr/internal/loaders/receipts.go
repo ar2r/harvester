@@ -22,6 +22,9 @@ type Receipts struct {
 	// MaxRequests — максимум запросов выгрузки (страниц чеков) за запуск;
 	// 0 — без ограничения. Остановка по лимиту — не ошибка.
 	MaxRequests int
+	// Now — логическое время запуска (для расчёта окна первой
+	// синхронизации); нулевое значение заменяется на текущее.
+	Now time.Time
 }
 
 func (l Receipts) TableName() string {
@@ -46,8 +49,13 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 		// Инкремент от самого свежего чека.
 		dateFrom = pointer.To(lkdr.Date(newest.Time))
 	} else {
-		// Limit to last 12 months for the initial sync
-		dateFrom = pointer.To(lkdr.Date(time.Now().AddDate(-1, 0, 0)))
+		// Первая синхронизация — окно в 12 месяцев от времени запуска.
+		now := l.Now
+		if now.IsZero() {
+			now = time.Now()
+		}
+
+		dateFrom = pointer.To(lkdr.Date(now.AddDate(-1, 0, 0)))
 	}
 
 	batch := &receiptsBatch{

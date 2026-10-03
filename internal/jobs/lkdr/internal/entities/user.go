@@ -5,13 +5,6 @@ type User struct {
 	Name  string `gorm:"index"`
 }
 
-type Device struct {
-	UserPhone string `gorm:"primaryKey"`
-	User      User   `gorm:"constraint:OnDelete:CASCADE"`
-
-	Id string
-}
-
 type Tokens struct {
 	UserPhone string `json:"-" gorm:"primaryKey"`
 	User      User   `json:"-" gorm:"constraint:OnDelete:CASCADE"`
