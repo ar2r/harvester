@@ -1,7 +1,9 @@
 package common
 
 import (
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -73,11 +75,16 @@ func TestMultiMutexSameKeyIsExclusive(t *testing.T) {
 	}
 }
 
-func TestMultiMutexConcurrentSameKey(t *testing.T) {
+func TestMultiMutexAllowsSingleHolderAtATime(t *testing.T) {
+	var mu MultiMutex[int]
+
+	// TryLock не ждёт освобождения: при контеншне возвращает ошибку
+	// (реестр задач превращает её в «already running»). Контракт —
+	// взаимное исключение: держатель ключа всегда один.
 	var (
-		mu      MultiMutex[int]
-		counter int
-		wg      sync.WaitGroup
+		concurrent    atomic.Int32
+		maxConcurrent atomic.Int32
+		wg            sync.WaitGroup
 	)
 
 	const goroutines = 8
@@ -86,20 +93,31 @@ func TestMultiMutexConcurrentSameKey(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			unlock, err := mu.TryLock(42)
-			if err != nil {
-				t.Error(err)
+			for {
+				unlock, err := mu.TryLock(42)
+				if err != nil {
+					runtime.Gosched()
+					continue
+				}
+
+				current := concurrent.Add(1)
+				for {
+					max := maxConcurrent.Load()
+					if current <= max || maxConcurrent.CompareAndSwap(max, current) {
+						break
+					}
+				}
+
+				concurrent.Add(-1)
+				unlock()
 				return
 			}
-
-			counter++
-			unlock()
 		}()
 	}
 
 	wg.Wait()
 
-	if counter != goroutines {
-		t.Fatalf("expected %d successful locks, got %d", goroutines, counter)
+	if got := maxConcurrent.Load(); got != 1 {
+		t.Fatalf("expected single holder at a time, saw %d concurrent", got)
 	}
 }
