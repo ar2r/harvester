@@ -369,6 +369,133 @@ class AiAgentTests(unittest.TestCase):
         self.assertIn("ТЕСТ_AI_ВЫВОД_12345", proc.stdout)
 
 
+LONG_ITEM_NAME = "Очень длинное название товара для проверки обрезки в отчётах"
+
+
+def truncated_name(limit: int) -> str:
+    return LONG_ITEM_NAME[: limit - 3].rstrip() + "..."
+
+
+def add_long_item(db: Path) -> None:
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "insert into receipts values ('c8','79000000001',NULL,'INDIVIDUAL','2026-09-11 10:00:00','1','dc8','Магазин Г','7700000001','2026-09-11 10:00:00','150.0',NULL)"
+    )
+    connection.execute(
+        "insert into fiscal_data values ('c8','2026-09-11 10:00:00',150.0,1,0.0,'Магазин Г','г. Москва','Магазин Г','7700000001')"
+    )
+    connection.execute(
+        "insert into fiscal_data_items values ('c8',1,?,10,4,75.0,1,NULL,2,150.0)",
+        (LONG_ITEM_NAME,),
+    )
+    connection.commit()
+    connection.close()
+
+
+class ItemNameCharsConfigTests(unittest.TestCase):
+    def test_missing_file_returns_default(self):
+        self.assertEqual(
+            _config.load_max_item_name_chars(Path("/nonexistent/config.json")),
+            _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+        )
+
+    def test_missing_key_returns_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text("{}", encoding="utf-8")
+            self.assertEqual(_config.load_max_item_name_chars(config), 40)
+
+    def test_custom_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text('{"reports": {"maxItemNameChars": 12}}', encoding="utf-8")
+            self.assertEqual(_config.load_max_item_name_chars(config), 12)
+
+    def test_invalid_value_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            for value in ("-5", '"40"', "true"):
+                config.write_text(
+                    json.dumps({"reports": {"maxItemNameChars": json.loads(value)}}),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    _config.load_max_item_name_chars(config)
+
+
+class ItemNameTruncationTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.db = self.root / "lkdr.db"
+        make_ai_test_db(self.db)
+        add_long_item(self.db)
+
+    def test_ai_report_truncates_to_default_40(self):
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(self.db),
+            "--out-dir", str(self.root / "reports"),
+            "--no-ai",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        content = (self.root / "reports" / "lkdr-2026-09.html").read_text(encoding="utf-8")
+        self.assertIn(truncated_name(40), content)
+        self.assertNotIn(LONG_ITEM_NAME, content)
+
+    def test_ai_report_respects_config_limit(self):
+        config = self.root / "config.json"
+        config.write_text('{"reports": {"maxItemNameChars": 10}}', encoding="utf-8")
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(self.db),
+            "--out-dir", str(self.root / "reports"),
+            "--config", str(config),
+            "--no-ai",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        content = (self.root / "reports" / "lkdr-2026-09.html").read_text(encoding="utf-8")
+        self.assertIn(truncated_name(10), content)
+        self.assertNotIn(LONG_ITEM_NAME, content)
+
+    def test_lkdr_report_truncates_to_default_40(self):
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--color", "never",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(truncated_name(40), proc.stdout)
+        self.assertNotIn(LONG_ITEM_NAME, proc.stdout)
+
+    def test_lkdr_report_respects_config_limit(self):
+        config = self.root / "config.json"
+        config.write_text('{"reports": {"maxItemNameChars": 10}}', encoding="utf-8")
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--config", str(config),
+            "--color", "never",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(truncated_name(10), proc.stdout)
+        self.assertNotIn(LONG_ITEM_NAME, proc.stdout)
+
+    def test_invalid_config_fails_loudly(self):
+        config = self.root / "config.json"
+        config.write_text('{"reports": {"maxItemNameChars": 0}}', encoding="utf-8")
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(self.db),
+            "--out-dir", str(self.root / "reports"),
+            "--config", str(config),
+            "--no-ai",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("maxItemNameChars", proc.stderr)
+
+
 class ExampleReportTests(unittest.TestCase):
     def run_example(self, *args: str) -> subprocess.CompletedProcess[str]:
         return run_python(REPORTS_DIR / "example.py", *args)

@@ -357,7 +357,7 @@ def pick_currency(current: base.PeriodReport, previous: base.PeriodReport, prefe
 # AI-выводы
 # ---------------------------------------------------------------------------
 
-def build_ai_json_prompt(data: dict) -> str:
+def build_ai_json_prompt(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS) -> str:
     stats = data["stats"]
     previous_stats = data["previous_stats"]
     currency = data["currency"]
@@ -365,6 +365,9 @@ def build_ai_json_prompt(data: dict) -> str:
     def lines(title: str, rows: list[str]) -> str:
         body = "\n".join(f"- {row}" for row in rows)
         return f"{title}:\n{body or '- нет данных'}"
+
+    def short_item(name: str) -> str:
+        return base.truncate_cell(name, max_item_name_chars)
 
     category_lines = [
         f"{name}: сейчас {base.money(cur, currency)}, было {base.money(prev, currency)}"
@@ -380,12 +383,12 @@ def build_ai_json_prompt(data: dict) -> str:
         for cur, prev in ((data["current_stores"].get(name, 0), data["previous_stores"].get(name, 0)),)
     ]
     item_change_lines = [
-        f"{name}: {fmt_delta(cur, prev, currency)}"
+        f"{short_item(name)}: {fmt_delta(cur, prev, currency)}"
         for name, cur in data["top_items"][:5]
         for prev in (data["previous_items"].get(name, 0),)
     ]
     recurring_lines = [
-        f"{name}: покупок {purchases}, сумма {base.money(total, currency)}, средняя цена {base.money(avg_unit, currency)}"
+        f"{short_item(name)}: покупок {purchases}, сумма {base.money(total, currency)}, средняя цена {base.money(avg_unit, currency)}"
         for name, purchases, quantity, total, avg_unit in data["recurring"][:5]
     ]
 
@@ -475,10 +478,13 @@ def split_command(command: str) -> list[str] | None:
     return argv or None
 
 
-def fallback_ai(data: dict) -> dict:
+def fallback_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS) -> dict:
     stats = data["stats"]
     previous_stats = data["previous_stats"]
     currency = data["currency"]
+
+    def short_item(name: str) -> str:
+        return base.truncate_cell(name, max_item_name_chars)
 
     lead = (
         f"Чистые расходы за {data['days']} дней — {base.money(stats.total, currency)} "
@@ -524,7 +530,7 @@ def fallback_ai(data: dict) -> dict:
         name, purchases, quantity, total, avg_unit = data["recurring"][0]
         cards.append((
             "Привычки",
-            f"Регулярная покупка: {name}",
+            f"Регулярная покупка: {short_item(name)}",
             f"{purchases} покупок на {base.money(total, currency)} "
             f"(средняя цена {base.money(avg_unit, currency)}).",
         ))
@@ -547,13 +553,20 @@ def fallback_ai(data: dict) -> dict:
 # Сборка HTML
 # ---------------------------------------------------------------------------
 
-def build_render(data: dict, ai: dict) -> tuple[dict[str, object], dict[str, str]]:
+def build_render(
+    data: dict,
+    ai: dict,
+    max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+) -> tuple[dict[str, object], dict[str, str]]:
     currency = data["currency"]
     symbol = base.CURRENCY_SYMBOLS.get(currency, currency)
     stats = data["stats"]
     previous_stats = data["previous_stats"]
     days = data["days"]
     end, start = data["end"], data["start"]
+
+    def short_item(name: str) -> str:
+        return base.truncate_cell(name, max_item_name_chars)
 
     avg_day = stats.total / days
     previous_avg_day = previous_stats.total / days
@@ -757,7 +770,7 @@ def build_render(data: dict, ai: dict) -> tuple[dict[str, object], dict[str, str
 
     blocks["food-row"] = "\n".join(
         T_FOOD_ROW.format(
-            name=name,
+            name=short_item(name),
             value=base.money(total, currency),
             share=f"доля {fmt_share(total, stats.total)}",
         )
@@ -831,7 +844,7 @@ def build_render(data: dict, ai: dict) -> tuple[dict[str, object], dict[str, str
 
     blocks["item-row"] = "\n".join(
         T_ITEM_ROW.format(
-            name=name,
+            name=short_item(name),
             receipts=purchases,
             qty=f"{quantity:g}",
             total=base.money(total, currency),
@@ -910,21 +923,27 @@ def main(argv: list[str] | None = None) -> int:
 
     ai_payload, ai_error = (None, None)
     ai_command = args.ai_command or _config.load_ai_command(args.config)
+    try:
+        max_item_name_chars = _config.load_max_item_name_chars(args.config)
+    except ValueError as error:
+        print(f"{args.config}: {error}", file=sys.stderr)
+        return 1
+
     if not args.no_ai:
         ai_payload, ai_error = request_ai(
-            build_ai_json_prompt(data), ai_command, args.ai_timeout
+            build_ai_json_prompt(data, max_item_name_chars), ai_command, args.ai_timeout
         )
         if ai_error:
             print(f"AI недоступен ({ai_error}); карточки построены из данных", file=sys.stderr)
 
     if ai_payload is None:
-        ai_payload = fallback_ai(data)
+        ai_payload = fallback_ai(data, max_item_name_chars)
         data["ai_source"] = "детерминированный анализ данных"
     else:
         agent = (split_command(ai_command) or [ai_command])[0]
         data["ai_source"] = f"AI CLI ({agent})"
 
-    scalars, blocks = build_render(data, ai_payload)
+    scalars, blocks = build_render(data, ai_payload, max_item_name_chars)
 
     try:
         rendered = apply_blocks(template, blocks)

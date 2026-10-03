@@ -665,17 +665,22 @@ def build_ai_prompt(
     item_rows: list[tuple[str, float, float]],
     service_rows: list[tuple[str, float, float]],
     recurring_rows: list[tuple[str, int, float, float, float]],
+    max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
 ) -> str:
     def lines(title: str, rows: Iterable[str]) -> str:
         body = "\n".join(f"- {row}" for row in rows)
         return f"{title}:\n{body if body else '- нет данных'}"
+
+    def short_item(name: str) -> str:
+        # В промпт названия товаров уходят уже сокращёнными — как в таблицах.
+        return truncate_cell(name, max_item_name_chars)
 
     store_change_lines = (
         f"{name}: {compact_money_delta(current, previous, currency)}"
         for name, current, previous in store_changes
     )
     item_change_lines = (
-        f"{name}: {compact_money_delta(current, previous, currency)}"
+        f"{short_item(name)}: {compact_money_delta(current, previous, currency)}"
         for name, current, previous in item_changes
     )
     store_lines = (
@@ -683,17 +688,17 @@ def build_ai_prompt(
         for name, count, total, previous_total in store_rows
     )
     item_lines = (
-        f"{name}: количество {quantity:.3g}, {compact_money_delta(total, previous_total, currency)}, доля {percent(total, stats.total)}"
+        f"{short_item(name)}: количество {quantity:.3g}, {compact_money_delta(total, previous_total, currency)}, доля {percent(total, stats.total)}"
         for name, quantity, total in item_rows
         for previous_total in (previous_item_totals.get(name, 0.0),)
     )
     service_lines = (
-        f"{name}: количество {quantity:.3g}, {compact_money_delta(total, previous_total, currency)}"
+        f"{short_item(name)}: количество {quantity:.3g}, {compact_money_delta(total, previous_total, currency)}"
         for name, quantity, total in service_rows
         for previous_total in (previous_item_totals.get(name, 0.0),)
     )
     recurring_lines = (
-        f"{name}: покупок {purchases}, количество {quantity:.3g}, сумма {compact_money_delta(total, previous_total, currency)}, средняя цена {money(avg_unit, currency)}"
+        f"{short_item(name)}: покупок {purchases}, количество {quantity:.3g}, сумма {compact_money_delta(total, previous_total, currency)}, средняя цена {money(avg_unit, currency)}"
         for name, purchases, quantity, total, avg_unit in recurring_rows
         for previous_total in (previous_item_totals.get(name, 0.0),)
     )
@@ -900,6 +905,7 @@ def run_report(
     ai_summary: bool,
     ai_command: str,
     ai_timeout: int,
+    max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
 ) -> None:
     if days < 1:
         raise SystemExit("--days must be at least 1")
@@ -927,6 +933,10 @@ def run_report(
     print()
 
     currencies = sorted(set(current.stats_by_currency) | set(previous.stats_by_currency))
+
+    def short_item(name: str) -> str:
+        # Только отображение: агрегация и ключи previous.items — по полным именам.
+        return truncate_cell(name, max_item_name_chars)
 
     for currency in currencies:
         stats = current.stats_by_currency[currency]
@@ -1086,7 +1096,7 @@ def run_report(
             ("Товар", "Сейчас", "Было", "Изменение"),
             (
                 (
-                    item,
+                    short_item(item),
                     money(current_total, currency),
                     money(previous_total, currency),
                     colored_expense_delta(current_total, previous_total, currency),
@@ -1198,7 +1208,7 @@ def run_report(
             ("Товар", "Кол-во", "Сейчас", "Было", "Изменение", "Доля"),
             (
                 (
-                    name,
+                    short_item(name),
                     f"{quantity:.3g}",
                     money(total, currency),
                     money(previous.items[(currency, name)].total, currency),
@@ -1226,7 +1236,7 @@ def run_report(
             ("Строка", "Кол-во", "Сейчас", "Было", "Изменение", "Доля"),
             (
                 (
-                    name,
+                    short_item(name),
                     f"{quantity:.3g}",
                     money(total, currency),
                     money(previous.items[(currency, name)].total, currency),
@@ -1272,7 +1282,7 @@ def run_report(
             ),
             (
                 (
-                    name,
+                    short_item(name),
                     purchases,
                     f"{quantity:.3g}",
                     money(total, currency),
@@ -1308,6 +1318,7 @@ def run_report(
                 item_rows=rows,
                 service_rows=service_rows,
                 recurring_rows=recurring_rows,
+                max_item_name_chars=max_item_name_chars,
             )
             print_ai_summary(prompt, ai_command, ai_timeout)
 
@@ -1379,6 +1390,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     args.ai_command = args.ai_command or _config.load_ai_command(args.config)
+    try:
+        max_item_name_chars = _config.load_max_item_name_chars(args.config)
+    except ValueError as error:
+        raise SystemExit(f"{args.config}: {error}")
     run_report(
         args.db,
         args.days,
@@ -1390,6 +1405,7 @@ def main() -> None:
         args.ai_summary,
         args.ai_command,
         args.ai_timeout,
+        max_item_name_chars,
     )
 
 
