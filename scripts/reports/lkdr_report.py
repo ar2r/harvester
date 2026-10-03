@@ -106,6 +106,11 @@ CURRENCY_NAMES = {
     "KZT": "тенге",
 }
 
+MONTHS_RU = {
+    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+    7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
+}
+
 KAZAKHSTAN_MARKERS = (
     "казахстан",
     "kazakhstan",
@@ -691,6 +696,39 @@ SHELF_LIFE_OVERRIDES = (
 # Позиция регулярная, если куплена минимум столько раз за окно корзины.
 MIN_BASKET_PURCHASES = 3
 
+# Сезонные профили спроса: (название группы, маркеры подстроки в названии
+# товара, множители по месяцам январь..декабрь). 1.0 — сезон спрос не меняет;
+# меньше — зимой берут реже, больше — летом чаще. Маркеры применяются по
+# первому совпадению, как SHELF_LIFE_OVERRIDES. Значения — типичные для
+# российского климата оценки, а не данные о конкретной семье.
+SEASONAL_PROFILES: tuple[tuple[str, tuple[str, ...], tuple[float, ...]], ...] = (
+    (
+        "Мороженое",
+        ("морожен", "эскимо", "пломбир"),
+        (0.35, 0.35, 0.45, 0.60, 0.90, 1.20, 1.50, 1.60, 1.50, 1.10, 0.90, 0.70),
+    ),
+    (
+        "Прохладительные напитки",
+        ("лимонад", "квас", "морс", "газир", "вода питьев"),
+        (0.50, 0.50, 0.55, 0.75, 1.00, 1.20, 1.40, 1.45, 1.40, 1.10, 0.85, 0.60),
+    ),
+    (
+        "Ягоды и летние фрукты",
+        ("ягод", "клубник", "малик", "черник", "арбуз", "дын", "персик", "нектарин", "виноград"),
+        (0.30, 0.30, 0.35, 0.50, 0.70, 1.10, 1.50, 1.60, 1.60, 1.20, 0.80, 0.50),
+    ),
+    (
+        "Горячие напитки",
+        ("чай", "кофе", "какао"),
+        (1.30, 1.30, 1.25, 1.10, 1.00, 0.90, 0.80, 0.75, 0.80, 1.10, 1.15, 1.30),
+    ),
+    (
+        "Мандарины и цитрусы",
+        ("мандарин", "апельсин"),
+        (1.30, 1.10, 0.90, 0.85, 0.85, 0.85, 0.85, 0.85, 0.90, 1.00, 1.30, 1.60),
+    ),
+)
+
 BUCKET_WEEKLY = "Каждую неделю"
 BUCKET_MONTHLY = "Раз в 2-4 недели"
 BUCKET_STOCK = "Запас впрок (месяц+)"
@@ -704,6 +742,41 @@ class BasketEntry:
     weekly_qty: float
     weekly_sum: float
     shelf_days: int
+    season_weight: float = 1.0
+
+    @property
+    def adjusted_qty(self) -> float:
+        """Недельное количество с учётом сезонного множителя."""
+        return self.weekly_qty * self.season_weight
+
+    @property
+    def adjusted_sum(self) -> float:
+        """Недельная сумма с учётом сезонного множителя."""
+        return self.weekly_sum * self.season_weight
+
+
+def seasonal_weight(name: str, month: int) -> float:
+    """Сезонный множитель спроса товара в месяце 1-12; 1.0 — сезон нейтрален."""
+    normalized = name.casefold()
+    for _, markers, weights in SEASONAL_PROFILES:
+        if any(marker in normalized for marker in markers):
+            return weights[month - 1]
+    return 1.0
+
+
+def seasonal_month_overrides(month: int) -> list[tuple[str, float]]:
+    """Сезонные группы месяца со сдвигом от нейтрали, по убыванию сдвига.
+
+    Возвращаются и группы, которых нет в корзине: сводка показывает, что
+    сейчас не в сезоне, ещё до похода в магазин.
+    """
+    rows = [(label, weights[month - 1]) for label, _, weights in SEASONAL_PROFILES]
+    return sorted(rows, key=lambda row: abs(row[1] - 1.0), reverse=True)
+
+
+def seasonal_mark(weight: float) -> str:
+    """Компактная метка множителя для таблиц: ×1.6 или «—» для нейтральных."""
+    return "—" if abs(weight - 1.0) < 1e-9 else f"×{weight:g}"
 
 
 def shelf_life_days(name: str, category: str) -> int:
@@ -727,11 +800,14 @@ def build_weekly_basket(
     report: PeriodReport,
     window_days: int,
     top: int = 15,
+    month: int | None = None,
 ) -> dict[str, dict[str, list[BasketEntry]]]:
     """Корзина регулярных продуктов на неделю: {валюта: {бакет: [записи]}}.
 
     Учитываются только продуктовые категории, купленные MIN_BASKET_PURCHASES+
-    раз за окно; частота закупок определяется сроком годности.
+    раз за окно; частота закупок определяется сроком годности. При заданном
+    месяце (1-12) записи получают сезонный множитель спроса, а weekly_qty и
+    weekly_sum остаются базовым средним за окно.
     """
     weeks = max(window_days / 7.0, 1.0)
     baskets: dict[str, dict[str, list[BasketEntry]]] = {}
@@ -752,6 +828,7 @@ def build_weekly_basket(
             weekly_qty=item.quantity / weeks,
             weekly_sum=item.total / weeks,
             shelf_days=shelf_life_days(name, category),
+            season_weight=seasonal_weight(name, month) if month is not None else 1.0,
         )
         buckets = baskets.setdefault(currency, {})
         buckets.setdefault(shelf_life_bucket(entry.shelf_days), []).append(entry)
@@ -1621,17 +1698,23 @@ def run_report(
             print_ai_summary(prompt, ai_command, ai_timeout)
 
     # Корзина продуктов на неделю: по регулярным покупкам за отдельное
-    # окно (по умолчанию 6 месяцев), частота — по срокам годности.
+    # окно (по умолчанию 6 месяцев), частота — по срокам годности, объём —
+    # с сезонной поправкой по месяцу конца периода.
     if basket_days >= 7:
         basket_report = build_period_report(
             conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
         )
-        baskets = build_weekly_basket(basket_report, basket_days, top)
+        baskets = build_weekly_basket(basket_report, basket_days, top, month=end.month)
         for currency, buckets in baskets.items():
             currency_label = CURRENCY_NAMES.get(currency, currency)
             weekly_total = sum(
-                entry.weekly_sum for entries in buckets.values() for entry in entries
+                entry.adjusted_sum for entries in buckets.values() for entry in entries
             )
+            seasonal_active = [
+                (label, weight)
+                for label, weight in seasonal_month_overrides(end.month)
+                if abs(weight - 1.0) > 1e-9
+            ]
             print_header(f"Корзина продуктов на неделю ({currency_label})")
             print(
                 COLOR.muted(
@@ -1640,6 +1723,16 @@ def run_report(
                     "по типовому сроку годности, количество — средний расход в неделю."
                 )
             )
+            if seasonal_active:
+                overrides = ", ".join(
+                    f"{label} {seasonal_mark(weight)}" for label, weight in seasonal_active
+                )
+                print(
+                    COLOR.muted(
+                        f"Сезонность ({MONTHS_RU[end.month].lower()}): {overrides}. "
+                        "Множитель корректирует количество и сумму позиции."
+                    )
+                )
             for bucket in BUCKET_ORDER:
                 entries = buckets.get(bucket)
                 if not entries:
@@ -1647,13 +1740,14 @@ def run_report(
 
                 print(f"Топ-{len(entries)} · {bucket}")
                 print_table(
-                    ("Продукт", "Кол-во/нед", "~Сумма/нед", "Срок годности"),
+                    ("Продукт", "Кол-во/нед", "~Сумма/нед", "Срок годности", "Сезон"),
                     (
                         (
                             short_item(entry.name),
-                            f"{entry.weekly_qty:.4g}",
-                            money(entry.weekly_sum, currency),
+                            f"{entry.adjusted_qty:.4g}",
+                            money(entry.adjusted_sum, currency),
                             f"~{entry.shelf_days} дн.",
+                            seasonal_mark(entry.season_weight),
                         )
                         for entry in entries
                     ),
