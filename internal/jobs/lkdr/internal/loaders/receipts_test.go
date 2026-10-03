@@ -11,7 +11,7 @@ import (
 	"github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
 )
 
-func TestReceiptsFirstSyncLimitsToTwelveMonths(t *testing.T) {
+func TestReceiptsInitialSyncLimitsToTwelveMonths(t *testing.T) {
 	db := testDB(t)
 
 	var dateFrom *lkdr.Date
@@ -34,139 +34,6 @@ func TestReceiptsFirstSyncLimitsToTwelveMonths(t *testing.T) {
 	}
 }
 
-func TestReceiptsFirstSyncFromConfiguredDate(t *testing.T) {
-	db := testDB(t)
-
-	var dateFrom *lkdr.Date
-	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
-		dateFrom = in.DateFrom
-		return &lkdr.ReceiptOut{}, nil
-	}}
-
-	loader := Receipts{
-		Phone:         "79000000000",
-		BatchSize:     100,
-		FirstSyncFrom: pointer.To(lkdr.Date(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))),
-	}
-
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("unexpected errors: %v", errs)
-	}
-
-	if dateFrom == nil || dateFrom.Time().Format("2006-01-02") != "2020-01-01" {
-		t.Fatalf("expected dateFrom 2020-01-01, got %v", dateFrom)
-	}
-}
-
-func TestReceiptsBackfillExtendsToConfiguredDepth(t *testing.T) {
-	db := testDB(t)
-	// k1 — 00:00, k2 — 01:00, k3 — 02:00 от базы 2026-01-01: история
-	// короче запрошенных 36 месяцев — загрузка должна уйти вглубь от now.
-	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
-
-	var dateFrom *lkdr.Date
-	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
-		dateFrom = in.DateFrom
-		return &lkdr.ReceiptOut{}, nil
-	}}
-
-	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36}
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("unexpected errors: %v", errs)
-	}
-
-	if dateFrom == nil {
-		t.Fatal("expected dateFrom for backfill sync")
-	}
-
-	expected := time.Now().AddDate(0, -36, 0)
-	if diff := dateFrom.Time().Sub(expected); diff < -24*time.Hour || diff > 24*time.Hour {
-		t.Fatalf("expected backfill from ~36 months ago (%s), got %s", expected, dateFrom.Time())
-	}
-}
-
-func TestReceiptsBackfillSkippedWhenHistoryDeepEnough(t *testing.T) {
-	db := testDB(t)
-	// История с 2026-01-01 — глубже окна в 1 месяц: обычный инкремент
-	// от самого свежего чека, без перечитывания окна.
-	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
-
-	var dateFrom *lkdr.Date
-	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
-		dateFrom = in.DateFrom
-		return &lkdr.ReceiptOut{}, nil
-	}}
-
-	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 1}
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("unexpected errors: %v", errs)
-	}
-
-	expected := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
-	if dateFrom == nil || !dateFrom.Time().Equal(expected) {
-		t.Fatalf("expected incremental dateFrom %s, got %v", expected, dateFrom)
-	}
-}
-
-func TestReceiptsBackfillNotRepeatedForSameDepth(t *testing.T) {
-	db := testDB(t)
-	// История с 2026-01-01 всегда короче окна в 36 месяцев: без маркера
-	// каждый запуск перекачивал бы окно заново.
-	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
-
-	var dateFroms []time.Time
-	client := &fakeClient{receiptFn: func(in *lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
-		if in.DateFrom != nil {
-			dateFroms = append(dateFroms, in.DateFrom.Time())
-		}
-		return &lkdr.ReceiptOut{}, nil
-	}}
-
-	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36}
-
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("first load: unexpected errors: %v", errs)
-	}
-
-	expected36 := time.Now().AddDate(0, -36, 0)
-	if diff := dateFroms[0].Sub(expected36); diff < -24*time.Hour || diff > 24*time.Hour {
-		t.Fatalf("expected first backfill from ~36 months ago (%s), got %s", expected36, dateFroms[0])
-	}
-
-	var marker entities.SyncDepth
-	if err := db.Where("user_phone = ?", "79000000000").First(&marker).Error; err != nil {
-		t.Fatalf("expected sync depth marker after backfill: %v", err)
-	}
-
-	// Второй запуск с той же глубиной — инкремент от самого свежего чека.
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("second load: unexpected errors: %v", errs)
-	}
-
-	incremental := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
-	if !dateFroms[1].Equal(incremental) {
-		t.Fatalf("expected incremental dateFrom %s on second run, got %s", incremental, dateFroms[1])
-	}
-
-	// Увеличенная глубина глубже маркера — окно качается снова.
-	loader.MinDepthMonths = 60
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("deeper load: unexpected errors: %v", errs)
-	}
-
-	expected60 := time.Now().AddDate(0, -60, 0)
-	if diff := dateFroms[2].Sub(expected60); diff < -24*time.Hour || diff > 24*time.Hour {
-		t.Fatalf("expected deeper backfill from ~60 months ago (%s), got %s", expected60, dateFroms[2])
-	}
-
-	if err := db.Where("user_phone = ?", "79000000000").First(&marker).Error; err != nil {
-		t.Fatal(err)
-	}
-	if diff := marker.DepthFrom.Time().Sub(expected60); diff < -24*time.Hour || diff > 24*time.Hour {
-		t.Fatalf("expected marker at ~60 months ago (%s), got %s", expected60, marker.DepthFrom.Time())
-	}
-}
-
 func TestReceiptsMaxRequestsStopsPagination(t *testing.T) {
 	db := testDB(t)
 	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
@@ -185,32 +52,6 @@ func TestReceiptsMaxRequestsStopsPagination(t *testing.T) {
 
 	if len(offsets) != 1 || offsets[0] != 0 {
 		t.Fatalf("expected exactly 1 api call at offset 0, got %v", offsets)
-	}
-}
-
-func TestReceiptsBackfillMarkerSkippedWhenLimited(t *testing.T) {
-	db := testDB(t)
-	// История короче окна в 36 месяцев — запускается докачка вглубь,
-	// но лимит в 1 запрос прерывает её: маркер ставиться не должен,
-	// иначе следующий запуск посчитал бы окно перекачанным.
-	seedReceipts(t, db, "79000000000", "k1", "k2", "k3")
-
-	client := &fakeClient{receiptFn: func(*lkdr.ReceiptIn) (*lkdr.ReceiptOut, error) {
-		return &lkdr.ReceiptOut{HasMore: true}, nil
-	}}
-
-	loader := Receipts{Phone: "79000000000", BatchSize: 100, MinDepthMonths: 36, MaxRequests: 1}
-	if _, errs := loader.Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("expected limit stop to be a success, got %v", errs)
-	}
-
-	var count int64
-	if err := db.Model(new(entities.SyncDepth)).Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	if count != 0 {
-		t.Fatalf("expected no sync depth marker after limited backfill, got %d", count)
 	}
 }
 

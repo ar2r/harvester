@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/based"
 	"github.com/jfk9w-go/lkdr-api"
 	"github.com/pkg/errors"
@@ -34,16 +33,8 @@ type JobParams struct {
 }
 
 type Job struct {
-	users map[string]map[string]Client
-	// firstSyncFrom — дата первой синхронизации на каждый телефон:
-	// per-user firstSyncMonths, глобальный firstSyncFrom или nil
-	// (тогда загрузчик берёт 12 месяцев по умолчанию).
-	firstSyncFrom map[string]*lkdr.Date
-	// firstSyncMonths — желаемая глубина истории на каждый телефон:
-	// при инкрементальных запусках докачивает старые чеки, если
-	// накопленная история короче окна (0 — не задана).
-	firstSyncMonths map[string]int
-	batchSize       int
+	users     map[string]map[string]Client
+	batchSize int
 	// maxRequests — ограничитель запросов выгрузки за запуск на загрузчик
 	// (lkdr.maxRequests); 0 — без ограничения.
 	maxRequests   int
@@ -58,11 +49,6 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 
 	if params.ClientFactory == nil {
 		params.ClientFactory = defaultClientFactory
-	}
-
-	firstSyncFrom, err := parseFirstSyncFrom(params.Config.FirstSyncFrom)
-	if err != nil {
-		return nil, err
 	}
 
 	if params.Config.MaxRequests < 0 {
@@ -91,20 +77,10 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}
 
 	users := make(map[string]map[string]Client)
-	firstSyncDates := make(map[string]*lkdr.Date)
-	firstSyncMonths := make(map[string]int)
 	for user, credentials := range params.Config.Users {
 		phones := make(map[string]Client)
 		users[user] = phones
 		for _, credential := range credentials {
-			syncFrom, depth, err := firstSyncFor(params.Clock.Now(), firstSyncFrom, params.Config.FirstSyncMonths, credential)
-			if err != nil {
-				return nil, errors.Wrapf(err, "user %s", user)
-			}
-
-			firstSyncDates[credential.Phone] = syncFrom
-			firstSyncMonths[credential.Phone] = depth
-
 			deviceID := credential.DeviceID
 			if deviceID == "" {
 				var err error
@@ -135,36 +111,12 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}
 
 	return &Job{
-		users:           users,
-		firstSyncFrom:   firstSyncDates,
-		firstSyncMonths: firstSyncMonths,
-		batchSize:       params.Config.BatchSize,
-		maxRequests:     params.Config.MaxRequests,
-		captchaSolver:   params.CaptchaSolver,
-		db:              db,
+		users:         users,
+		batchSize:     params.Config.BatchSize,
+		maxRequests:   params.Config.MaxRequests,
+		captchaSolver: params.CaptchaSolver,
+		db:            db,
 	}, nil
-}
-
-// firstSyncFor решает, с какой даты качать чеки при первой синхронизации
-// телефона и какая минимальная глубина истории нужна на инкрементальных
-// запусках: действует большая из глубин — lkdr.firstSyncMonths и настройка
-// пользователя firstSyncMonths (чтобы разовая докачка вглубь не срезалась
-// меньшей настройкой из config.json). Без глубин — глобальный firstSyncFrom;
-// без него nil — загрузчик возьмёт последние 12 месяцев.
-func firstSyncFor(now time.Time, globalFrom *lkdr.Date, globalMonths int, credential Credential) (*lkdr.Date, int, error) {
-	if globalMonths < 0 {
-		return nil, 0, errors.Errorf("lkdr.firstSyncMonths %d: must be positive", globalMonths)
-	}
-
-	if credential.FirstSyncMonths < 0 {
-		return nil, 0, errors.Errorf("firstSyncMonths %d: must be positive", credential.FirstSyncMonths)
-	}
-
-	if months := max(globalMonths, credential.FirstSyncMonths); months > 0 {
-		return pointer.To(lkdr.Date(now.AddDate(0, -months, 0))), months, nil
-	}
-
-	return globalFrom, 0, nil
 }
 
 func (j *Job) Info() jobs.Info {
@@ -200,11 +152,9 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 	var stack common.Stack[loaders.Interface]
 	stack.Push(
 		loaders.Receipts{
-			Phone:          phone,
-			BatchSize:      j.batchSize,
-			FirstSyncFrom:  j.firstSyncFrom[phone],
-			MinDepthMonths: j.firstSyncMonths[phone],
-			MaxRequests:    j.maxRequests,
+			Phone:       phone,
+			BatchSize:   j.batchSize,
+			MaxRequests: j.maxRequests,
 		},
 		loaders.FiscalData{Phone: phone, BatchSize: j.batchSize, MaxRequests: j.maxRequests},
 	)
@@ -223,19 +173,6 @@ func (j *Job) executeLoaders(ctx jobs.Context, userID, phone string, client Clie
 	}
 
 	return
-}
-
-func parseFirstSyncFrom(value string) (*lkdr.Date, error) {
-	if value == "" {
-		return nil, nil
-	}
-
-	date, err := time.Parse("2006-01-02", value)
-	if err != nil {
-		return nil, errors.Wrapf(err, "parse firstSyncFrom %q: expected YYYY-MM-DD", value)
-	}
-
-	return pointer.To(lkdr.Date(date)), nil
 }
 
 func generateDeviceID(userAgent, phone string) (string, error) {

@@ -49,7 +49,7 @@ func testDB(t *testing.T) database.DB {
 		Config: database.Config{
 			DSN: filepath.Join(t.TempDir(), "test.db"),
 		},
-		Entities: []any{new(entities.User), new(entities.Brand), new(entities.Receipt), new(entities.FiscalData), new(entities.FiscalDataItem), new(entities.SyncDepth)},
+		Entities: []any{new(entities.User), new(entities.Brand), new(entities.Receipt), new(entities.FiscalData), new(entities.FiscalDataItem)},
 	})
 
 	if err != nil {
