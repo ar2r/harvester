@@ -498,8 +498,29 @@ def parse_datetime(value: str) -> datetime:
 
 
 def money(value: float | int | None, currency: str) -> str:
+    # +0.0 нормализует -0.0: без этого печатались «-0.00 ₽».
+    value = float(value or 0) + 0.0
     symbol = CURRENCY_SYMBOLS.get(currency, currency)
-    return f"{float(value or 0):,.2f}".replace(",", " ") + f" {symbol}"
+    return f"{value:,.2f}".replace(",", " ") + f" {symbol}"
+
+
+def signed_refund(value: float, currency: str) -> str:
+    """Возврат со знаком минуса везде, где он показан: возврат уменьшает
+    расходы. Ноль печатается без минуса."""
+    if value > 0:
+        return COLOR.warning(f"-{money(value, currency)}")
+
+    return COLOR.warning(money(value, currency))
+
+
+def format_qty(value: float) -> str:
+    """Человекочитаемое количество для таблиц: 2; 0.5; 0.47 — без хвоста
+    значащих цифр вроде 0.4667."""
+    rounded = round(value, 2)
+    if rounded == int(rounded):
+        return f"{int(rounded)}"
+
+    return f"{rounded:g}"
 
 
 def percent(value: float, total: float) -> str:
@@ -632,6 +653,24 @@ def latest_receipt_datetime(conn: sqlite3.Connection) -> datetime:
     if not row or row[0] is None:
         raise SystemExit("No fiscal data found in database")
     return parse_datetime(row[0])
+
+
+def earliest_receipt_datetime(conn: sqlite3.Connection) -> datetime:
+    row = conn.execute(
+        "select date_time from fiscal_data order by datetime(date_time) asc limit 1"
+    ).fetchone()
+    if not row or row[0] is None:
+        raise SystemExit("No fiscal data found in database")
+    return parse_datetime(row[0])
+
+
+def in_reference_zone(value: datetime, reference: datetime) -> datetime:
+    """Naive-время приводится к зоне reference (стенные часы не меняются):
+    для смешанных баз, где часть строк без офсета."""
+    if value.tzinfo is None and reference.tzinfo is not None:
+        return value.replace(tzinfo=reference.tzinfo)
+
+    return value
 
 
 def store_name(row: sqlite3.Row) -> str:
@@ -1366,7 +1405,9 @@ def run_report(
     previous = build_period_report(conn, previous_start, previous_end, store_rules, receipt_rules, private)
 
     print_header("Отчет по покупкам")
-    print(f"{COLOR.muted('База данных:')} {db_path}")
+    if not FORMAT_STATE["md"]:
+        # Локальный путь машины не нужен в md-версии для чата.
+        print(f"{COLOR.muted('База данных:')} {db_path}")
     print(f"{COLOR.muted('Текущий период:')} {start:%Y-%m-%d %H:%M} - {end:%Y-%m-%d %H:%M}")
     print(f"{COLOR.muted('Период сравнения:')} {previous_start:%Y-%m-%d %H:%M} - {previous_end:%Y-%m-%d %H:%M}")
     if private:
@@ -1466,11 +1507,12 @@ def run_report(
         print_header(f"Короткий вывод ({currency_label})")
         print(insight_line("Чистые расходы", stats.total, previous_stats.total, currency))
         print(insight_line("Среднее в день", avg_day, previous_avg_day, currency))
+        # Возврат уменьшает расходы — везде показывается со знаком минус.
         print(
             insight_line(
                 "Возвраты и отмены",
-                stats.refund_total,
-                previous_stats.refund_total,
+                -stats.refund_total,
+                -previous_stats.refund_total,
                 currency,
             )
         )
@@ -1478,7 +1520,7 @@ def run_report(
 
         print_header(f"Сравнение ({currency_label})")
         print_table(
-            ("Показатель", "Текущий период", "Прошлый период", "Изменение"),
+            ("Показатель", "Текущий период", "Предыдущий период", "Изменение"),
             (
                 (
                     "Чистые расходы",
@@ -1514,9 +1556,9 @@ def run_report(
                 ),
                 (
                     "Возвраты и отмены",
-                    COLOR.warning(f"-{money(stats.refund_total, currency)}"),
-                    COLOR.warning(f"-{money(previous_stats.refund_total, currency)}"),
-                    colored_neutral_money_delta(
+                    signed_refund(stats.refund_total, currency),
+                    signed_refund(previous_stats.refund_total, currency),
+                    colored_expense_delta(
                         -stats.refund_total, -previous_stats.refund_total, currency
                     ),
                 ),
@@ -1526,7 +1568,7 @@ def run_report(
 
         print_header(f"Категории ({currency_label})")
         print_table(
-            ("Категория", "Сейчас", "Было", "Изменение", "Доля"),
+            ("Категория", "Текущий период", "Предыдущий период", "Изменение", "Доля"),
             (
                 (
                     category,
@@ -1538,6 +1580,13 @@ def run_report(
                 for category, total, previous_total in category_rows
                 if total > 0 or previous_total > 0
             ),
+        )
+        # Сходимость объясняем на месте, а не только в свёрнутых правилах.
+        print(
+            COLOR.muted(
+                "Категории считаются по товарным позициям чеков и могут отличаться "
+                "от итога чеков (возвраты, предоплата, сервисные строки)."
+            )
         )
         print()
 
@@ -1568,7 +1617,7 @@ def run_report(
             rest_total = sum(total for _, _, total in other_rows[top:])
             rest_count = max(len(other_rows) - len(top_other_rows), 0)
             print_table(
-                ("Позиция", "Кол-во", "Сейчас", "Доля Прочего"),
+                ("Позиция", "Кол-во", "Текущий период", "Доля Прочего"),
                 (
                     (
                         short_item(name) if name.strip() else "(без названия)",
@@ -1589,24 +1638,11 @@ def run_report(
             print()
 
         print_header(f"Главные изменения ({currency_label})")
-        print(f"Топ-{top} изменений по магазинам")
-        print_table(
-            ("Магазин", "Сейчас", "Было", "Изменение"),
-            (
-                (
-                    short_item(store),
-                    money(current_total, currency),
-                    money(previous_total, currency),
-                    colored_expense_delta(current_total, previous_total, currency),
-                )
-                for store, current_total, previous_total in store_changes
-            ),
-        )
-        print()
-
+        # Таблицу изменений по магазинам не дублируем: топ магазинов ниже
+        # показывает те же суммы; store_changes уходят только в AI-промпт.
         print(f"Топ-{top} изменений по товарам")
         print_table(
-            ("Товар", "Сейчас", "Было", "Изменение"),
+            ("Товар", "Текущий период", "Предыдущий период", "Изменение"),
             (
                 (
                     short_item(item),
@@ -1639,7 +1675,7 @@ def run_report(
                 (
                     "Возвраты и отмены",
                     stats.refund_count,
-                    COLOR.warning(f"-{money(stats.refund_total, currency)}"),
+                    signed_refund(stats.refund_total, currency),
                 ),
                 (
                     "Закрытие уже учтенной предоплаты",
@@ -1665,7 +1701,7 @@ def run_report(
             print_table(
                 ("Магазин", "Чеки", "Сумма"),
                 (
-                    (short_item(store), count, money(total, currency))
+                    (short_item(store), count, signed_refund(total, currency))
                     for store, count, total in refund_rows
                 ),
             )
@@ -1683,7 +1719,7 @@ def run_report(
             reverse=True,
         )[:top]
         print_table(
-            ("Магазин", "Чеки", "Сейчас", "Было", "Изменение", "Доля"),
+            ("Магазин", "Чеки", "Текущий период", "Предыдущий период", "Изменение", "Доля"),
             (
                 (
                     short_item(store),
@@ -1715,7 +1751,7 @@ def run_report(
             reverse=True,
         )[:top]
         print_table(
-            ("Товар", "Кол-во", "Сейчас", "Было", "Изменение", "Доля"),
+            ("Товар", "Кол-во", "Текущий период", "Предыдущий период", "Изменение", "Доля"),
             (
                 (
                     short_item(name),
@@ -1747,7 +1783,7 @@ def run_report(
             reverse=True,
         )[:top]
         print_table(
-            ("Строка", "Кол-во", "Сейчас", "Было", "Изменение", "Доля"),
+            ("Строка", "Кол-во", "Текущий период", "Предыдущий период", "Изменение", "Доля"),
             (
                 (
                     short_item(name),
@@ -1791,8 +1827,8 @@ def run_report(
                 "Товар",
                 "Покупки",
                 "Кол-во",
-                "Сейчас",
-                "Было",
+                "Текущий период",
+                "Предыдущий период",
                 "Изменение",
                 "Средняя цена",
             ),
@@ -1841,13 +1877,18 @@ def run_report(
 
     # Корзина продуктов на неделю: по регулярным покупкам за отдельное
     # окно (по умолчанию 6 месяцев), частота — по срокам годности, объём —
-    # с сезонной поправкой по месяцу конца периода.
+    # с сезонной поправкой по месяцу конца периода. Окно клампится по
+    # фактической глубине истории, иначе короткая база размазывала
+    # «ориентир на неделю» до бессмысленных значений.
     if basket_days >= 7:
+        earliest = in_reference_zone(earliest_receipt_datetime(conn), end)
+        history_days = (end - earliest).days + 1
+        window_days = min(basket_days, max(history_days, 7))
         basket_report = build_period_report(
-            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules, private
+            conn, end - timedelta(days=window_days), end, store_rules, receipt_rules, private
         )
         baskets = build_weekly_basket(
-            basket_report, basket_days, top, month=end.month, private_categories=private
+            basket_report, window_days, top, month=end.month, private_categories=private
         )
         for currency, buckets in baskets.items():
             currency_label = CURRENCY_NAMES.get(currency, currency)
@@ -1860,9 +1901,15 @@ def run_report(
                 if abs(weight - 1.0) > 1e-9
             ]
             print_header(f"Корзина продуктов на неделю ({currency_label})")
+            window_note = f"за последние {window_days} дней"
+            if window_days < basket_days:
+                window_note += (
+                    f" — история чеков короче окна {basket_days} дней,"
+                    " среднее может быть нестабильным"
+                )
             print(
                 COLOR.muted(
-                    f"Регулярные покупки за последние {basket_days} дней "
+                    f"Регулярные покупки {window_note} "
                     f"({MIN_BASKET_PURCHASES}+ чеков на позицию); частота закупок — "
                     "по типовому сроку годности, количество — средний расход в неделю."
                 )
@@ -1882,13 +1929,13 @@ def run_report(
                 if not entries:
                     continue
 
-                print(f"Топ-{len(entries)} · {bucket}")
+                print(f"Позиции ({len(entries)}) · {bucket}")
                 print_table(
                     ("Продукт", "Кол-во/нед", "~Сумма/нед", "Срок годности", "Сезон"),
                     (
                         (
                             short_item(entry.name),
-                            f"{entry.adjusted_qty:.4g}",
+                            format_qty(entry.adjusted_qty),
                             money(entry.adjusted_sum, currency),
                             f"~{entry.shelf_days} дн.",
                             seasonal_mark(entry.season_weight),

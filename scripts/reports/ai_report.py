@@ -78,8 +78,8 @@ def apply_scalars(template: str, values: dict[str, object]) -> str:
 
 T_COMPARE_ROW = """        <tr>
           <td>{name}</td>
-          <td class="num">{prev}</td>
           <td class="num">{cur}</td>
+          <td class="num">{prev}</td>
           <td class="num {diff_class}">{diff}</td>
         </tr>"""
 
@@ -114,7 +114,7 @@ T_CATEGORY_VISUAL = """    <div class="category-visual">
       </div>
       <div class="category-bars">
         <div class="category-series">
-          <span class="series-label">Раньше</span>
+          <span class="series-label">Предыдущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:{zero_pct:.1f}%"></i>
             <i class="signed-bar previous{prev_neg}" style="left:{prev_left:.1f}%;width:{prev_width:.1f}%"></i>
@@ -122,7 +122,7 @@ T_CATEGORY_VISUAL = """    <div class="category-visual">
           <strong>{prev}</strong>
         </div>
         <div class="category-series">
-          <span class="series-label">Сейчас</span>
+          <span class="series-label">Текущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:{zero_pct:.1f}%"></i>
             <i class="signed-bar current{cur_neg}" style="left:{cur_left:.1f}%;width:{cur_width:.1f}%"></i>
@@ -211,9 +211,17 @@ def fmt_int(value: int) -> str:
 
 def fmt_delta(current: float, previous: float, currency: str, with_pct: bool = True) -> str:
     diff = current - previous
-    sign = "+" if diff > 0 else ("−" if diff < 0 else "±")
+    sign = "+" if diff > 0 else ("-" if diff < 0 else "±")
     pct = f" ({diff / previous * 100:+.1f}%)" if with_pct and previous else ""
     return f"{sign}{base.money(abs(diff), currency)}{pct}"
+
+
+def fmt_count_delta(current: int, previous: int, with_pct: bool = True) -> str:
+    """Разница счётных метрик — без валюты («+3 (+42.9%)», не «+3.00 ₽»)."""
+    diff = current - previous
+    sign = "+" if diff > 0 else ("-" if diff < 0 else "±")
+    pct = f" ({diff / previous * 100:+.1f}%)" if with_pct and previous else ""
+    return f"{sign}{diff}{pct}"
 
 
 def fmt_share(value: float, total: float) -> str:
@@ -434,6 +442,7 @@ def collect(
     basket_weekly_total = 0.0
     bucket_totals: dict[str, float] = {}
     basket_days = getattr(args, "basket_days", 180)
+    basket_window = basket_days
     month = end.month
     seasonal_rows = [
         (label, weight)
@@ -441,13 +450,18 @@ def collect(
         if abs(weight - 1.0) > 1e-9
     ]
     if basket_days >= 7:
+        # Окно клампится по фактической глубине истории: короткая база
+        # иначе размазывает «ориентир на неделю» до бессмысленных значений.
+        earliest = base.in_reference_zone(base.earliest_receipt_datetime(conn), end)
+        history_days = (end - earliest).days + 1
+        basket_window = min(basket_days, max(history_days, 7))
         basket_report = base.build_period_report(
-            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules, private
+            conn, end - timedelta(days=basket_window), end, store_rules, receipt_rules, private
         )
         # Фильтр приватных категорий — до обрезки топа, чтобы скрытая
         # позиция не занимала строку публичной.
         baskets = base.build_weekly_basket(
-            basket_report, basket_days, args.top, month=month, private_categories=private
+            basket_report, basket_window, args.top, month=month, private_categories=private
         )
         for bucket, entries in (baskets.get(currency) or {}).items():
             if entries:
@@ -478,6 +492,8 @@ def collect(
         "current_stores": current_stores,
         "previous_stores": previous_stores,
         "current_store_counts": current_store_counts,
+        "private_categories": sorted(private),
+        "hidden_store_label": base.HIDDEN_STORE_LABEL,
         "current_items": current_items,
         "previous_items": previous_items,
         "category_rows": category_rows,
@@ -490,6 +506,7 @@ def collect(
         "basket": basket,
         "bucket_totals": bucket_totals,
         "basket_days": basket_days,
+        "basket_window": basket_window,
         "basket_weekly_total": basket_weekly_total,
         "month": month,
         "seasonal_rows": seasonal_rows,
@@ -626,7 +643,7 @@ def build_shopping_prompt(
     for bucket in base.BUCKET_ORDER:
         for entry in data["basket"].get(bucket, []):
             item_lines.append(
-                f"- {short_item(entry.name)} · {bucket} · {entry.adjusted_qty:.4g}/нед · "
+                f"- {short_item(entry.name)} · {bucket} · {base.format_qty(entry.adjusted_qty)}/нед · "
                 f"{base.money(entry.adjusted_sum, currency)}/нед · срок ~{entry.shelf_days} дн · "
                 f"сезон {base.seasonal_mark(entry.season_weight)}"
             )
@@ -684,7 +701,7 @@ def fallback_shopping_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_
 
         items = []
         for entry in entries[:5]:
-            note = f"~{entry.adjusted_qty:.4g}/нед ≈ {base.money(entry.adjusted_sum, currency)}, срок ~{entry.shelf_days} дн."
+            note = f"~{base.format_qty(entry.adjusted_qty)}/нед ≈ {base.money(entry.adjusted_sum, currency)}, срок ~{entry.shelf_days} дн."
             if abs(entry.season_weight - 1.0) > 1e-9:
                 note += f" Сезон {base.seasonal_mark(entry.season_weight)}."
                 if entry.season_weight < 0.8:
@@ -709,7 +726,8 @@ def fallback_shopping_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_
 
     lead = (
         f"Ориентир недели — {base.money(data['basket_weekly_total'], currency)} по регулярной корзине "
-        f"за {data['basket_days']} дней; частота закупок — по срокам годности, объём — с сезонной поправкой."
+        f"за {data.get('basket_window', data.get('basket_days', 180))} дней; "
+        "частота закупок — по срокам годности, объём — с сезонной поправкой."
     )
     tips = [
         "Скоропортящееся (срок до 7 дней) берите небольшими партиями — ровно на неделю.",
@@ -830,10 +848,13 @@ def fallback_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_
         ))
     if data["recurring"]:
         name, purchases, quantity, total, avg_unit = data["recurring"][0]
+        purchases_word = {1: "покупка", 2: "покупки", 3: "покупки", 4: "покупки"}.get(
+            purchases, "покупок"
+        )
         cards.append((
             "Привычки",
             f"Регулярная покупка: {short_item(name)}",
-            f"{purchases} покупок на {base.money(total, currency)} "
+            f"{purchases} {purchases_word} на {base.money(total, currency)} "
             f"(средняя цена {base.money(avg_unit, currency)}).",
         ))
     if len(cards) < 2:
@@ -891,6 +912,12 @@ def build_render(
         "period_days": str(days),
         "boundary_time": f"{start:%d.%m.%Y %H:%M}",
         "boundary_tz": tz,
+        "privacy_note": (
+            f"Приватность: позиции категорий {', '.join(data['private_categories'])} построчно не выводятся "
+            f"(суммы учтены в категориях); магазины таких чеков показаны как «{data['hidden_store_label']}»."
+            if data["private_categories"]
+            else ""
+        ),
         "pill_text": f"{MONTHS_RU[end.month]} {end.year} · {currency}",
         "as_of_time": f"{end:%d.%m.%Y %H:%M}",
         "last_receipt_time": f"{data['last_receipt']:%d.%m.%Y %H:%M}",
@@ -932,7 +959,7 @@ def build_render(
             "годности, объём — с сезонной поправкой; AI собирает из этого план закупки."
         ),
         # Сравнение
-        "change_banner_text": f"Чистые расходы за {days} дней: было → стало",
+        "change_banner_text": f"Чистые расходы за {days} дней: предыдущий период → текущий",
         "change_banner_value": fmt_delta(stats.total, previous_stats.total, currency),
         # AI-секция
         "ai_section_title": "AI-анализ месяца",
@@ -944,7 +971,11 @@ def build_render(
         "second_panel_title": "Топ позиций в чеках",
         "category_list_title": "Все категории: было → стало",
         "category_list_intro": "Полоса «Раньше» и «Сейчас» в общей шкале; отрицательные значения — левее нулевой линии.",
-        "category_list_footnote": "Сервисные строки (доставка, упаковка, компенсации) исключены из категорий.",
+        "category_list_footnote": (
+            "Сервисные строки (доставка, упаковка, компенсации) исключены из категорий. "
+            "Категории считаются по товарным позициям чеков и могут отличаться "
+            "от итога чеков (возвраты, предоплата)."
+        ),
         # Разбор Прочего
         "other_breakdown_title": "Что осталось в Прочем",
         "other_breakdown_note": (
@@ -960,7 +991,9 @@ def build_render(
         "category_total_previous_label": "Предыдущий период:",
         "category_total_current_label": "Текущий период:",
         "category_total_diff_label": "Изменение:",
-        "details_summary": "Полные списки категорий обоих периодов",
+        # details_summary удалён вместе с пустым блоком «Полные списки
+        # категорий» — генератор его никогда не заполнял.
+
         # График накопленных расходов
         "daily_note": "Накопленные чистые расходы по дням",
         "chart_title": f"Накопленные расходы, {days} дней",
@@ -972,27 +1005,36 @@ def build_render(
         "weekly_title": "Расходы по неделям",
         "weekly_note": f"чистые расходы за последние {WEEKS_ON_CHART} недель",
         "weekly_chart_title": f"Чистые расходы по неделям, {WEEKS_ON_CHART} недель",
-        "weekly_chart_desc": "По одному столбику на неделю; последний — текущая, возможно неполная неделя",
+        "weekly_chart_desc": (
+            "По одному столбику на неделю; тёмные — текущий период, "
+            "светлые — период сравнения, последний может быть короче семи дней"
+        ),
         "weekly_footnote": (
-            "Последний столбик — текущая неделя (может быть короче семи дней), "
-            "остальные — полные недели. Суммы — чистые, с учётом возвратов."
+            "Тёмные столбики — недели текущего периода, светлые — периода сравнения; "
+            "последняя неделя может быть короче семи дней. Суммы — чистые, с учётом возвратов."
         ),
         # Магазины
         "stores_note": f"Топ-{data['top']} магазинов по чистым расходам",
-        "mini_legend_note": "полосы — доли от максимума колонки «Сейчас»",
+        "mini_legend_note": "полосы — доли от максимума колонки «Текущий период»",
         # Привычки
         "habits_note": "Позиции, встретившиеся более чем в одном чеке",
         # Закупка на неделю
         "shopping_title": "Что купить на неделе",
         "shopping_note": (
-            f"регулярные покупки за {data['basket_days']} дней; "
+            f"регулярные покупки за {data['basket_window']} дней; "
             f"ориентир: {base.money(data['basket_weekly_total'], currency)}/нед"
         ),
         "shopping_budget_title": "Ориентир недели",
         "shopping_budget_value": f"{base.money(data['basket_weekly_total'], currency)} / нед",
         "shopping_budget_footnote": (
-            f"Средний недельный расход по регулярной корзине за {data['basket_days']} дней "
+            f"Средний недельный расход по регулярной корзине за {data['basket_window']} дней "
             "с сезонной поправкой текущего месяца."
+            + (
+                " История чеков короче запрошенного окна "
+                f"({data['basket_days']} дней): среднее может быть нестабильным."
+                if data["basket_window"] < data["basket_days"]
+                else ""
+            )
         ),
         "seasonal_title": f"Сезон сейчас: {month_name}",
         "seasonal_footnote": (
@@ -1023,7 +1065,10 @@ def build_render(
         "prev_check_1_label": "Покупочные чеки, сумма",
         "prev_check_2_label": "Возвраты и отмены",
         "prev_check_3_label": "Закрытия предоплаты (пропущены)",
-        "current_period_footnote": "Расхождение контрольных сумм:",
+        "current_period_footnote": (
+            "Расхождение = расходы до возвратов − возвраты − чистые расходы; "
+            "0.00 ₽ — контрольные суммы сходятся."
+        ),
         "previous_period_footnote": "Механика корректировок идентична текущему периоду.",
         "method_details_summary": "Правила расчёта",
         # Подвал
@@ -1036,9 +1081,10 @@ def build_render(
     # Контрольные суммы
     def checks(s: base.MutableStats) -> tuple[str, str, str, str]:
         discrepancy = s.gross_total - s.total - s.refund_total
+        refund = f"-{base.money(s.refund_total, currency)}" if s.refund_total > 0 else base.money(0, currency)
         return (
             base.money(s.gross_total, currency),
-            base.money(s.refund_total, currency),
+            refund,
             f"{fmt_int(s.ignored_count)} чеков · {base.money(s.ignored_total, currency)}",
             base.money(discrepancy, currency),
         )
@@ -1076,7 +1122,9 @@ def build_render(
         ("Покупочные чеки", previous_stats.count, stats.count, "count"),
         ("Средний чек", previous_avg_check, avg_check, "money"),
         ("Среднее в день", previous_avg_day, avg_day, "money"),
-        ("Возвраты и отмены", previous_stats.refund_total, stats.refund_total, "money"),
+        # Возврат уменьшает расходы — в таблице со знаком минуса,
+        # как и в остальном отчёте.
+        ("Возвраты и отмены", -previous_stats.refund_total, -stats.refund_total, "money"),
     ]
 
     def fmt_value(value: float, kind: str) -> str:
@@ -1085,13 +1133,17 @@ def build_render(
     table_rows = []
     for name, previous, current, kind in compare_metrics:
         diff_class = "increase" if current > previous else ("decrease" if current < previous else "")
+        if kind == "count":
+            diff = fmt_count_delta(int(current), int(previous))
+        else:
+            diff = fmt_delta(current, previous, currency)
         table_rows.append(
             T_COMPARE_ROW.format(
                 name=name,
                 prev=fmt_value(previous, kind),
                 cur=fmt_value(current, kind),
                 diff_class=diff_class,
-                diff=fmt_delta(current, previous, currency),
+                diff=diff,
             )
         )
     blocks["compare-row"] = "\n".join(table_rows)
@@ -1215,7 +1267,7 @@ def build_render(
                 T_BASKET_ROW.format(
                     name=short_item(entry.name),
                     bucket=bucket,
-                    qty=f"{entry.adjusted_qty:.4g}",
+                    qty=base.format_qty(entry.adjusted_qty),
                     total=base.money(entry.adjusted_sum, currency),
                     shelf=f"~{entry.shelf_days} дн.",
                     season=base.seasonal_mark(entry.season_weight),
@@ -1254,7 +1306,8 @@ def build_render(
         name="сезонных сдвигов в этом месяце нет", cls="s-flat", mark="×1", note="все группы нейтральны"
     )
 
-    # График по неделям: столбики в общей шкале, текущая неделя подсвечена
+    # График по неделям: столбики в общей шкале; цвет — принадлежность
+    # периоду (тёмный — текущий, светлый — сравнения), а не «текущая неделя».
     weeks = data["weeks"]
     week_axis_max = nice_axis_max(max([total for _, total, _ in weeks] + [0.0]))
     scalars["week_axis_max_label"] = base.money(week_axis_max, currency)
@@ -1262,7 +1315,7 @@ def build_render(
     slot = (962 - 75) / len(weeks)
     bar_width = slot * 0.62
     week_bars = []
-    for index, (week_end, total, is_current) in enumerate(weeks):
+    for index, (week_end, total, _is_current) in enumerate(weeks):
         height = min(total / week_axis_max, 1.0) * (270 - 35)
         x = 75 + slot * index + (slot - bar_width) / 2
         cx = x + bar_width / 2
@@ -1270,7 +1323,7 @@ def build_render(
         value = compact_money(total, currency) if total > 0 else ""
         week_bars.append(
             T_WEEK_BAR.format(
-                bar_class="week-bar-cur" if is_current else "week-bar-prev",
+                bar_class="week-bar-cur" if week_end >= start else "week-bar-prev",
                 x=x,
                 y=270 - height,
                 width=bar_width,

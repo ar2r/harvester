@@ -133,6 +133,8 @@
   <strong>{{ notice_head }}</strong> {{ notice_body }}
 </div>
 
+<p class="footnote" style="margin-top:6px">{{ privacy_note }}</p>
+
 <!-- ======================= ЧАСТЬ 1 / АНАЛИЗ ======================= -->
 <div id="part-analysis" class="part">
   <div class="eyebrow">Часть 1 · Подотчёт</div>
@@ -196,14 +198,14 @@
   <div class="section-head">
     <div>
       <div class="eyebrow">03 / Сравнение двух равных периодов</div>
-      <h2>Было → стало</h2>
+      <h2>Предыдущий период → текущий</h2>
     </div>
     <span class="tag">По {{ period_days }} суток · граница {{ boundary_time }}, {{ boundary_tz }}</span>
   </div>
 
   <div class="compare-legend">
-    <span><i class="swatch previous"></i>Предыдущие {{ period_days }} дней · {{ period_previous }}</span>
-    <span><i class="swatch current"></i>Последние {{ period_days }} дней · {{ period_current }}</span>
+    <span><i class="swatch previous"></i>Предыдущий период · {{ period_previous }}</span>
+    <span><i class="swatch current"></i>Текущий период · {{ period_current }}</span>
   </div>
 
   <!-- Итог изменения -->
@@ -218,8 +220,8 @@
       <thead>
         <tr>
           <th scope="col">Показатель</th>
-          <th scope="col">Раньше</th>
-          <th scope="col">Сейчас</th>
+          <th scope="col">Текущий период</th>
+          <th scope="col">Предыдущий период</th>
           <th scope="col">Разница</th>
         </tr>
       </thead>
@@ -227,8 +229,8 @@
         <!-- block:compare-row -->
         <tr>
           <td>{{ compare_metric_name }}</td>
-          <td class="num">{{ compare_metric_previous }}</td>
           <td class="num">{{ compare_metric_current }}</td>
+          <td class="num">{{ compare_metric_previous }}</td>
           <td class="num {{ diff_class}}">{{ compare_metric_diff }}</td>
         </tr>
         <!-- /block:compare-row -->
@@ -271,7 +273,7 @@
       </div>
       <div class="category-bars">
         <div class="category-series">
-          <span class="series-label">Раньше</span>
+          <span class="series-label">Предыдущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:30%"></i>
             <i class="signed-bar previous" style="left:30%;width:25%"></i>
@@ -279,7 +281,7 @@
           <strong>{{ series_previous_value }}</strong>
         </div>
         <div class="category-series">
-          <span class="series-label">Сейчас</span>
+          <span class="series-label">Текущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:30%"></i>
             <i class="signed-bar current" style="left:30%;width:45%"></i>
@@ -310,7 +312,7 @@
       </div>
       <div class="category-bars">
         <div class="category-series">
-          <span class="series-label">Раньше</span>
+          <span class="series-label">Предыдущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:30%"></i>
             <i class="signed-bar previous" style="left:10%;width:20%"></i>
@@ -318,7 +320,7 @@
           <strong>{{ series_previous_value_alt }}</strong>
         </div>
         <div class="category-series">
-          <span class="series-label">Сейчас</span>
+          <span class="series-label">Текущий</span>
           <div class="signed-track">
             <i class="zero-line" style="left:30%"></i>
             <i class="signed-bar current negative-bar" style="left:18%;width:12%"></i>
@@ -392,12 +394,6 @@
       <p class="footnote">{{ other_breakdown_footnote }}</p>
     </div>
   </div>
-
-  <!-- Свёрнутый список всех категорий (опционально) -->
-  <details class="all-category-details">
-    <summary>{{ details_summary }}</summary>
-    <div><!-- полные списки категорий обоих периодов --></div>
-  </details>
 </section>
 
 <!-- ======================= 05 / МАГАЗИНЫ ======================= -->
@@ -412,16 +408,16 @@
   <div class="panel">
     <div class="scroll">
       <p class="mini-legend">
-        <i class="swatch previous"></i>Раньше
-        <i class="swatch current"></i>Сейчас
+        <i class="swatch previous"></i>Предыдущий период
+        <i class="swatch current"></i>Текущий период
         <span>{{ mini_legend_note }}</span>
       </p>
       <table>
         <thead>
           <tr>
-            <th scope="col">Категория / магазин</th>
-            <th scope="col">Сейчас</th>
-            <th scope="col">Раньше</th>
+            <th scope="col">Магазин</th>
+            <th scope="col">Текущий период</th>
+            <th scope="col">Предыдущий период</th>
             <th scope="col">Изменение</th>
             <th scope="col">Доля сейчас</th>
             <th scope="col" class="visual-header">Визуально</th>
@@ -435,7 +431,7 @@
             <td class="num">{{ store_previous }}</td>
             <td class="num increase">{{ store_diff }}</td>
             <td class="num">{{ store_share }}</td>
-            <td class="mini-comparison" aria-label="Раньше {{ store_previous }}, сейчас {{ store_current }}">
+            <td class="mini-comparison" aria-label="Предыдущий период {{ store_previous }}, текущий {{ store_current }}">
               <span class="mini-pair">
                 <span class="mini-track previous-track"><span class="mini-series previous" style="width:50%"></span></span>
                 <span class="mini-track current-track"><span class="mini-series current" style="width:100%"></span></span>
@@ -504,8 +500,8 @@
   </div>
   <div class="panel">
     <div class="compare-legend">
-      <span><i class="swatch previous"></i>Раньше · {{ period_previous }} · пунктир</span>
-      <span><i class="swatch current"></i>Сейчас · {{ period_current }} · сплошная</span>
+      <span><i class="swatch previous"></i>Предыдущий период · {{ period_previous }} · пунктир</span>
+      <span><i class="swatch current"></i>Текущий период · {{ period_current }} · сплошная</span>
     </div>
 
     <!-- SVG-график накопленных сумм; генератор строит свои path/polyline и подписи осей.
@@ -547,8 +543,12 @@
     <small>{{ weekly_note }}</small>
   </div>
   <div class="panel">
-    <!-- SVG-столбики: по одному на неделю; последний — текущая неделя,
-         подсвечен классом week-bar-cur. Геометрия ниже демонстрационная. -->
+    <div class="compare-legend">
+      <span><i class="swatch" style="background:#547467"></i>Текущий период</span>
+      <span><i class="swatch" style="background:#b4d1c3"></i>Период сравнения</span>
+    </div>
+    <!-- SVG-столбики: по одному на неделю; цвет — принадлежность периоду
+         (week-bar-cur — текущий, week-bar-prev — сравнения). -->
     <div class="chart">
       <svg viewBox="0 0 1000 330" role="img" aria-labelledby="weekly-title weekly-desc">
         <title id="weekly-title">{{ weekly_chart_title }}</title>
