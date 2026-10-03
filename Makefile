@@ -8,10 +8,11 @@ LKDR_FORMAT ?= text
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
 CONFIG_FILE ?= ./config.json
+MONTHS ?= 36
 REPORT_ARGS ?=
 AI_REPORT_ARGS ?=
 
-.PHONY: test bin build run parse report report-all ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file fox
+.PHONY: test bin build run parse backfill report report-all ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file fox
 
 test:
 	go test -v ./...
@@ -29,6 +30,12 @@ run: build
 
 parse: build
 	./bin/app --config.file='$(CONFIG_FILE)' --stdin.user=all
+
+# Докачка истории чеков вглубь без правки config.json: make backfill MONTHS=60.
+# Глубина действует только на этот запуск; берётся большая из глобальной
+# и пользовательской настройки firstSyncMonths.
+backfill: build
+	./bin/app --config.file='$(CONFIG_FILE)' --stdin.user=all --lkdr.firstSyncMonths='$(MONTHS)'
 
 report:
 	./scripts/report.py $(REPORT_ARGS)

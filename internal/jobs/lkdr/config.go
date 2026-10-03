@@ -21,6 +21,12 @@ type Config struct {
 	Database      database.Config         `yaml:"database" doc:"Настройка подключения к БД."`
 	APIURL        string                  `yaml:"apiUrl,omitempty" doc:"Базовый URL API ЛКДР. По умолчанию — сервис ФНС; для интеграционных тестов можно указать адрес мок-сервиса (docker compose up mocklkdr)."`
 	FirstSyncFrom string                  `yaml:"firstSyncFrom,omitempty" doc:"Дата (YYYY-MM-DD), с которой загружать чеки при первой синхронизации — когда в базе ещё нет чеков пользователя. По умолчанию — последние 12 месяцев. На повторные инкрементальные запуски не влияет."`
+	// FirstSyncMonths — глобальная глубина истории в месяцах: и окно первой
+	// синхронизации, и минимальная глубина на инкрементальных запусках.
+	// Берётся большая из глобальной и пользовательской настройки — так
+	// разовая докачка (make backfill --lkdr.firstSyncMonths=N) не молчит
+	// из-за меньшей настройки в config.json.
+	FirstSyncMonths int                   `yaml:"firstSyncMonths,omitempty" doc:"Глубина истории в месяцах для всех пользователей — окно первой синхронизации и минимальная глубина на инкрементальных запусках. Действует большая из глобальной и пользовательской настройки firstSyncMonths, перекрывает lkdr.firstSyncFrom. Разовую докачку вглубь запускают make backfill MONTHS=N."`
 	BatchSize     int                     `yaml:"batchSize,omitempty" default:"1000" doc:"Количество чеков в одном запросе и количество фискальных данных за одно обновление."`
 	Timeout       time.Duration           `yaml:"timeout,omitempty" default:"5m" doc:"Таймаут для запросов."`
 	Users         map[string][]Credential `yaml:"users" doc:"Пользователи и их авторизационные данные."`

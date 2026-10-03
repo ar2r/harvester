@@ -90,13 +90,13 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 		phones := make(map[string]Client)
 		users[user] = phones
 		for _, credential := range credentials {
-			syncFrom, err := firstSyncDateFor(params.Clock.Now(), firstSyncFrom, credential)
+			syncFrom, depth, err := firstSyncFor(params.Clock.Now(), firstSyncFrom, params.Config.FirstSyncMonths, credential)
 			if err != nil {
 				return nil, errors.Wrapf(err, "user %s", user)
 			}
 
 			firstSyncDates[credential.Phone] = syncFrom
-			firstSyncMonths[credential.Phone] = credential.FirstSyncMonths
+			firstSyncMonths[credential.Phone] = depth
 
 			deviceID := credential.DeviceID
 			if deviceID == "" {
@@ -137,19 +137,26 @@ func NewJob(ctx context.Context, params JobParams) (*Job, error) {
 	}, nil
 }
 
-// firstSyncDateFor решает, с какой даты качать чеки при первой синхронизации
-// телефона: настройка пользователя firstSyncMonths перекрывает глобальный
-// firstSyncFrom; nil — загрузчик возьмёт последние 12 месяцев.
-func firstSyncDateFor(now time.Time, global *lkdr.Date, credential Credential) (*lkdr.Date, error) {
-	if months := credential.FirstSyncMonths; months != 0 {
-		if months < 0 {
-			return nil, errors.Errorf("firstSyncMonths %d: must be positive", months)
-		}
-
-		return pointer.To(lkdr.Date(now.AddDate(0, -months, 0))), nil
+// firstSyncFor решает, с какой даты качать чеки при первой синхронизации
+// телефона и какая минимальная глубина истории нужна на инкрементальных
+// запусках: действует большая из глубин — lkdr.firstSyncMonths и настройка
+// пользователя firstSyncMonths (чтобы разовая докачка вглубь не срезалась
+// меньшей настройкой из config.json). Без глубин — глобальный firstSyncFrom;
+// без него nil — загрузчик возьмёт последние 12 месяцев.
+func firstSyncFor(now time.Time, globalFrom *lkdr.Date, globalMonths int, credential Credential) (*lkdr.Date, int, error) {
+	if globalMonths < 0 {
+		return nil, 0, errors.Errorf("lkdr.firstSyncMonths %d: must be positive", globalMonths)
 	}
 
-	return global, nil
+	if credential.FirstSyncMonths < 0 {
+		return nil, 0, errors.Errorf("firstSyncMonths %d: must be positive", credential.FirstSyncMonths)
+	}
+
+	if months := max(globalMonths, credential.FirstSyncMonths); months > 0 {
+		return pointer.To(lkdr.Date(now.AddDate(0, -months, 0))), months, nil
+	}
+
+	return globalFrom, 0, nil
 }
 
 func (j *Job) Info() jobs.Info {
