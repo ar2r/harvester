@@ -1228,7 +1228,15 @@ def run_report(
     if FORMAT_STATE["md"]:
         COLOR.enabled = False
 
-    conn = sqlite3.connect(db_path)
+    if not db_path.exists():
+        raise SystemExit(
+            f"База данных не найдена: {db_path}.\n"
+            "Сначала соберите чеки: make parse (подробнее — docs/getting-started.md)."
+        )
+
+    # База открывается только для чтения: опечатка в --db не должна
+    # создавать пустой файл, а отчёт — случайно не менять данные.
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     require_tables(conn)
 
