@@ -1,5 +1,7 @@
 # LedgerFox
 
+[![CI](https://github.com/ar2r/ledger-fox/actions/workflows/ci.yml/badge.svg)](https://github.com/ar2r/ledger-fox/actions/workflows/ci.yml)
+
 Сбор чеков ФНС «Мои чеки онлайн» в локальную SQLite-базу: задача `lkdr`
 загружает и сохраняет данные, ручной запуск — через stdin-триггер.
 
@@ -183,7 +185,7 @@ API-ключом этого сервиса. SMS-код приходит на в�
 
 - [Начало работы](docs/getting-started.md) — сборка, конфиг, первый запуск, устройство приложения;
 - [Конфигурация](docs/configuration.md) — справочник по `config.json`;
-- [Разработка](docs/development.md) — команды, тесты, мок-сервис ФНС, свои Python-отчёты;
+- [Разработка](docs/development.md) — команды, тесты, CI, мок-сервис ФНС, свои Python-отчёты;
 - [Отчёт по покупкам LKDR](docs/lkdr-report.md) — полный гайд по основному отчёту.
 
 ## Быстрый старт: настройка с нуля

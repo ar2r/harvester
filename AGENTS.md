@@ -22,6 +22,7 @@
 - `make build` / `make bin` — сборка в `bin/` (`app`, `mocklkdr`); `make test` — `go test -v ./...` + автотесты Python-отчётов (`scripts/tests/`); одиночный тест: `go test -v ./path/to/pkg -run TestName`.
 - Тесты: юнит-тесты colocated в пакетах (`internal/database`, `internal/common`, `internal/logs`, `internal/captcha`, `internal/jobs`, `internal/jobs/lkdr` + `storage_test.go`, `internal/jobs/lkdr/internal/{entities,loaders}`, `internal/triggers` + `internal/triggers/stdin`); интеграционные — `internal/jobs/lkdr/integration_test.go` (мок подменяет ФНС через redirect-транспорт; отдельно мок запускается `docker compose up mocklkdr` → `lkdr.apiUrl`); E2E — `cmd/app/e2e_test.go` (собирает бинарник и гоняет его как чёрный ящик). Новую логику сопровождать тестами.
 - `scripts/dist.sh` — релизные архивы в `bin/` (кросс-сборка требует C-компилятор из-за SQLite/CGO).
+- CI (`.github/workflows/ci.yml`): push в master / PR / workflow_dispatch, отмена устаревших прогонов; шаги — vet → `make bin` → `make test` → `go test -race ./...`; Go из go.mod, раннер ubuntu-latest. Dependabot: gomod ежедневно, PR авто-мерж кроме мажорных.
 
 ## Безопасность и приватность
 

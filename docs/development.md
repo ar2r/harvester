@@ -1,6 +1,6 @@
 # Разработка
 
-Команды, тесты и мок-сервис LedgerFox.
+Команды, тесты, CI и мок-сервис LedgerFox.
 
 ## Команды Makefile
 
@@ -31,6 +31,29 @@ go test -v ./path/to/pkg -run TestName
 порядка пользователей в `--stdin.user=all` и форматов вывода
 (текст и `--json`). Сборка бинарника занимает несколько секунд —
 это разовая цена за проверку всего `main()` целиком.
+
+## CI (GitHub Actions)
+
+Workflow [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) гоняет
+полный набор автотестов:
+
+- **Когда:** push в `master`, любой pull_request и ручной запуск
+  (workflow_dispatch). Прогоны одной ветки отменяют друг друга —
+  работает только свежайший.
+- **Шаги:** `go vet` → `make bin` → `make test` (все Go-тесты, включая
+  интеграционные и E2E, плюс автотесты Python-отчётов) → отдельный прогон
+  `go test -race ./...` с race-детектором.
+- **Окружение:** ubuntu-latest; версия Go берётся из `go.mod`
+  (`go-version-file`), кэш модулей включён. CGO-компилятор и `python3`
+  на раннере уже есть.
+
+Зелёный бейдж CI — в шапке [README](../README.md). Для защиты мастера
+проверку `Build and test` можно сделать обязательной:
+Settings → Branches → Require status checks.
+
+Dependabot обновляет Go-зависимости ежедневно (`.github/dependabot.yml`);
+его PR мержатся автоматически, кроме мажорных версий
+(`.github/workflows/dependabot-pr.yml`).
 
 ## Интеграционные тесты и мок-сервис
 
