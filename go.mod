@@ -8,6 +8,7 @@ require (
 	github.com/jfk9w-go/confi v0.0.7
 	github.com/jfk9w-go/lkdr-api v1.1.18
 	github.com/jfk9w-go/rucaptcha-api v1.0.10
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/pkg/errors v0.9.1
 	go.uber.org/multierr v1.11.0
 	gorm.io/driver/sqlite v1.6.0
@@ -25,7 +26,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
-	github.com/mattn/go-sqlite3 v1.14.52 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
