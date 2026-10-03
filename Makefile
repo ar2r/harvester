@@ -10,7 +10,7 @@ CONFIG_FILE ?= ./config.json
 REPORT_ARGS ?=
 AI_REPORT_ARGS ?=
 
-.PHONY: test bin build run parse report ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
+.PHONY: test bin build run parse report report-all ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
 
 test:
 	go test -v ./...
@@ -34,6 +34,10 @@ report:
 
 ai-report:
 	./scripts/reports/ai_report.py --db $(LKDR_DB) $(AI_REPORT_ARGS)
+
+# Всё сразу и без вопросов: обновить HTML-отчёт месяца, затем напечатать
+# текстовый отчёт с AI-выводами и рекомендациями в консоль.
+report-all: ai-report lkdr-report-ai
 
 clean:
 	rm -rf bin/*
