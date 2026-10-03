@@ -40,7 +40,7 @@ Thumbs.db
 *.log
 
 # Python
-scripts/__pycache__/
+__pycache__/
 
 # Local report outputs (содержат личные покупки — не коммитить)
 /reports/
