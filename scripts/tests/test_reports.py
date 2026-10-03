@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -24,6 +26,7 @@ LAUNCHER = SCRIPTS_DIR / "report.py"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(REPORTS_DIR))
 import _config  # noqa: E402 — scripts/reports/_config.py
+import ai_report as ai_report_module  # noqa: E402 — scripts/reports/ai_report.py
 import lkdr_report as base_module  # noqa: E402 — scripts/reports/lkdr_report.py
 import report  # noqa: E402 — scripts/report.py
 
@@ -830,6 +833,234 @@ class WeeklyBasketTests(unittest.TestCase):
             self.assertIn("Каждую неделю", content)
             self.assertIn("Молоко 3.2%", content)
             self.assertIn("~7 дн.", content)
+
+
+def add_ice_cream_items(db: Path) -> None:
+    """Сезонная регулярная покупка: мороженое, по 3 чека за окно корзины."""
+    connection = sqlite3.connect(db)
+    for key, when in (
+        ("i1", "2026-05-20 12:00:00"),
+        ("i2", "2026-06-25 12:00:00"),
+        ("i3", "2026-07-30 12:00:00"),
+    ):
+        connection.execute(
+            "insert into receipts values (?, '79000000001',NULL,'INDIVIDUAL',?,'1',?,'Магазин Е','7700000001',?,'120.0',NULL)",
+            (key, when, "d" + key, when),
+        )
+        connection.execute(
+            "insert into fiscal_data values (?,?,120.0,1,0.0,'Магазин Е','г. Москва','Магазин Е','7700000001')",
+            (key, when),
+        )
+        connection.execute(
+            "insert into fiscal_data_items values (?,1,'Мороженое пломбир 450мл',10,4,120.0,1,NULL,2,240.0)",
+            (key,),
+        )
+    connection.commit()
+    connection.close()
+
+
+class SeasonalityTests(unittest.TestCase):
+    def test_seasonal_weight_profiles(self):
+        # Зимой мороженое ниже обычного, летом выше; первый совпавший профиль выигрывает.
+        self.assertEqual(base_module.seasonal_weight("Мороженое пломбир", 1), 0.35)
+        self.assertEqual(base_module.seasonal_weight("Эскимо", 7), 1.5)
+        self.assertEqual(base_module.seasonal_weight("Эскимо", 8), 1.6)
+        self.assertEqual(base_module.seasonal_weight("Квас бутилированный", 1), 0.5)
+        # Несезонный товар — нейтральный множитель.
+        self.assertEqual(base_module.seasonal_weight("Молоко 3.2%", 1), 1.0)
+        self.assertEqual(base_module.seasonal_weight("Крупа гречневая", 7), 1.0)
+        # Все 12 месяцев дают положительный множитель.
+        for month in range(1, 13):
+            for label, _, weights in base_module.SEASONAL_PROFILES:
+                self.assertGreater(weights[month - 1], 0, f"{label}/{month}")
+                self.assertEqual(len(weights), 12, label)
+
+    def test_seasonal_month_overrides_and_marks(self):
+        rows = base_module.seasonal_month_overrides(7)
+        self.assertTrue(rows)
+        shifts = [abs(weight - 1.0) for _, weight in rows]
+        self.assertEqual(shifts, sorted(shifts, reverse=True))
+        # В июле все профильные группы сдвинуты от нейтрали.
+        self.assertNotIn(1.0, [weight for _, weight in rows])
+        self.assertEqual(base_module.seasonal_mark(1.0), "—")
+        self.assertEqual(base_module.seasonal_mark(0.35), "×0.35")
+        self.assertEqual(base_module.seasonal_mark(1.6), "×1.6")
+
+    def test_build_weekly_basket_applies_season(self):
+        report = base_module.PeriodReport(
+            start=datetime(2026, 1, 1),
+            end=datetime(2026, 6, 29),
+            stats_by_currency=defaultdict(base_module.MutableStats),
+            stores=defaultdict(base_module.MutableStats),
+            days_total=defaultdict(base_module.MutableStats),
+            refund_stores=defaultdict(base_module.MutableStats),
+            items=defaultdict(base_module.ItemStats),
+        )
+        milk = base_module.ItemStats(quantity=26, total=2600.0)
+        milk.purchase_receipts.update({"r1", "r2", "r3"})
+        ice = base_module.ItemStats(quantity=13, total=2600.0)
+        ice.purchase_receipts.update({"r1", "r2", "r3"})
+        report.items[("RUB", "Молоко 3.2%")] = milk
+        report.items[("RUB", "Мороженое пломбир 450мл")] = ice
+
+        weeks = 180 / 7.0
+        baskets = base_module.build_weekly_basket(report, 180, top=10, month=1)
+        entries = {
+            entry.name: entry
+            for bucket_entries in baskets["RUB"].values()
+            for entry in bucket_entries
+        }
+        # Базовое среднее сохранено, рекомендация скорректирована сезонностью.
+        self.assertAlmostEqual(entries["Молоко 3.2%"].weekly_qty, 26 / weeks)
+        self.assertAlmostEqual(entries["Молоко 3.2%"].adjusted_qty, 26 / weeks)
+        self.assertAlmostEqual(entries["Мороженое пломбир 450мл"].weekly_qty, 13 / weeks)
+        self.assertAlmostEqual(entries["Мороженое пломбир 450мл"].season_weight, 0.35)
+        self.assertAlmostEqual(
+            entries["Мороженое пломбир 450мл"].adjusted_qty, 13 / weeks * 0.35
+        )
+        self.assertAlmostEqual(
+            entries["Мороженое пломбир 450мл"].adjusted_sum, 2600.0 / weeks * 0.35
+        )
+
+    def test_text_report_shows_seasonality(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_basket_items(db)
+            add_ice_cream_items(db)
+
+            proc = run_python(REPORTS_DIR / "lkdr_report.py", "--db", str(db), "--color", "never")
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("Сезонность (сентябрь)", proc.stdout)
+            self.assertIn("Сезон", proc.stdout)
+            self.assertIn("×1.5", proc.stdout)  # мороженое в сентябре
+            self.assertIn("Мороженое пломбир", proc.stdout)
+
+
+class ShoppingReportTests(unittest.TestCase):
+    def test_html_report_shopping_part(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            add_basket_items(db)
+            add_ice_cream_items(db)
+
+            proc = run_python(
+                REPORTS_DIR / "ai_report.py",
+                "--db", str(db), "--out-dir", str(out), "--no-ai",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            content = (out / "lkdr-2026-09.html").read_text(encoding="utf-8")
+            # Части-подотчёты и навигация по ним.
+            self.assertIn("Закупка на неделю", content)
+            self.assertIn('href="#part-shopping"', content)
+            self.assertIn('href="#part-charts"', content)
+            # Сезонная секция: месяц, множители, пометка «вне сезона» нет в сентябре.
+            self.assertIn("Сезон сейчас: сентябрь", content)
+            self.assertIn("ниже обычного спроса", content)
+            # Корзина с сезонной колонкой и план закупки (фолбэк по бакетам).
+            self.assertIn("Мороженое пломбир", content)
+            self.assertIn("План закупки", content)
+            self.assertIn("Ориентир недели", content)
+            self.assertIn("детерминированный план по корзине", content)
+            # Недельный график существует и размечен.
+            self.assertIn("Расходы по неделям", content)
+            self.assertIn("week-bar-cur", content)
+            # Дублирование убрано: парных полос и карточек периодов больше нет.
+            self.assertNotIn('class="paired"', content)
+            self.assertNotIn("period-card", content)
+            self.assertNotIn("compare-paired", content)
+
+    def test_shopping_prompt_mentions_season_and_limits_to_basket(self):
+        entry = base_module.BasketEntry(
+            name="Молоко 3.2%",
+            category="Молочные продукты",
+            weekly_qty=2.0,
+            weekly_sum=120.0,
+            shelf_days=7,
+            season_weight=1.0,
+        )
+        data = {
+            "currency": "RUB",
+            "month": 1,
+            "basket_days": 180,
+            "basket_weekly_total": 950.0,
+            "seasonal_rows": [("Мороженое", 0.35), ("Горячие напитки", 1.3)],
+            "basket": {base_module.BUCKET_WEEKLY: [entry]},
+        }
+
+        prompt = ai_report_module.build_shopping_prompt(data)
+
+        self.assertIn("январь", prompt)
+        self.assertIn("×0.35", prompt)
+        self.assertIn("×1.3", prompt)
+        self.assertIn("Молоко 3.2%", prompt)
+        self.assertIn("ТОЛЬКО товары из списка", prompt)
+        self.assertIn("950.00", prompt)
+
+    def test_fallback_shopping_groups_follow_buckets(self):
+        data = {
+            "currency": "RUB",
+            "basket_days": 180,
+            "basket_weekly_total": 500.0,
+            "basket": {
+                base_module.BUCKET_WEEKLY: [
+                    base_module.BasketEntry("Молоко 3.2%", "Молочные продукты", 2, 100, 7, 1.0)
+                ],
+            },
+            "seasonal_rows": [],
+        }
+
+        fallback = ai_report_module.fallback_shopping_ai(data)
+
+        self.assertIn("lead", fallback)
+        self.assertIn("groups", fallback)
+        self.assertEqual(fallback["groups"][0]["title"], base_module.BUCKET_WEEKLY)
+        self.assertEqual(fallback["groups"][0]["items"][0]["name"], "Молоко 3.2%")
+
+    def test_ai_agent_payload_feeds_shopping_plan(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        payload = json.dumps(
+            {
+                "lead": "Вывод месяца фейк-агента",
+                "cards": [{"theme": "Тема", "title": "Карточка", "body": "Тело."}],
+                "actions": [],
+                "groups": [
+                    {
+                        "title": "Группа закупки из фейк-агента",
+                        "items": [{"name": "Молоко 3.2%", "note": "2 упаковки"}],
+                    }
+                ],
+                "tips": ["Совет по хранению"],
+            },
+            ensure_ascii=False,
+        )
+        write_fake_agent(bin_dir, "fakeagent", payload)
+        (root / "config.json").write_text('{"ai": {"command": "fakeagent"}}', encoding="utf-8")
+        db = root / "lkdr.db"
+        make_ai_test_db(db)
+        add_basket_items(db)
+
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(db), "--out-dir", str(root / "reports"),
+            "--config", str(root / "config.json"),
+            env=env,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        content = (root / "reports" / "lkdr-2026-09.html").read_text(encoding="utf-8")
+        self.assertIn("Группа закупки из фейк-агента", content)
+        self.assertIn("Совет по хранению", content)
+        self.assertIn("2 упаковки", content)
 
 
 LONG_STORE_NAME = "Очень длинное название магазина для проверки обрезки в отчетах"
