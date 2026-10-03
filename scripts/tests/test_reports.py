@@ -215,6 +215,10 @@ class AiReportTests(unittest.TestCase):
             self.assertIn("Месяц в чеках", content)
             self.assertNotIn("{{", content)
             self.assertNotIn("<!--", content)
+            # Текст комментариев шаблона не должен утекать в отчёт.
+            self.assertNotIn("-->", content)
+            self.assertNotIn("ШАБЛОН-ПРОТОТИП", content)
+            self.assertNotIn("генератор (scripts/reports/ai_report.py)", content)
 
     def test_rerun_updates_same_month_file(self):
         with tempfile.TemporaryDirectory() as tmp:

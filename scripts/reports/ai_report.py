@@ -929,6 +929,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rendered = apply_blocks(template, blocks)
         rendered = re.sub(r"<!--.*?-->", "", rendered, flags=re.DOTALL)
+        # `-->` вне комментария в HTML быть не может: его наличие значит, что
+        # какой-то комментарий шаблона разорван вложенным `-->` и его текст
+        # утёк бы в отчёт обычным текстом.
+        if "-->" in rendered:
+            raise RuntimeError("в шаблоне комментарий с вложенной последовательностью '-->'")
         rendered = apply_scalars(rendered, scalars)
     except RuntimeError as error:
         print(f"Ошибка рендера шаблона: {error}", file=sys.stderr)
