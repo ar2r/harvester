@@ -2,7 +2,7 @@
 
 ## Обзор проекта
 
-- LedgerFox — Go-приложение (Go 1.24+): задача `lkdr` собирает чеки ФНС «Мои чеки онлайн» в SQLite, stdin-триггер даёт ручной запуск. Точка входа: `cmd/app/main.go`.
+- LedgerFox — Go-приложение (Go 1.26+): задача `lkdr` собирает чеки ФНС «Мои чеки онлайн» в SQLite, stdin-триггер даёт ручной запуск. Точка входа: `cmd/app/main.go`.
 - Ключевые пакеты: `internal/jobs` (реестр задач + `lkdr`), `internal/triggers/stdin`, `internal/database` (GORM, только SQLite, запись через UPSERT), `internal/captcha` (RuCaptcha), `internal/mocklkdr` (мок API ФНС для тестов).
 - Документация: `README.md` и `docs/` (`getting-started.md`, `configuration.md`, `development.md`, `lkdr-report.md`).
 - Python-отчёты (`scripts/reports/*.py`) работают с SQLite-базой LKDR отдельно от Go-приложения; `make report` — интерактивное меню отчётов (раздел «Python-отчёты»).
