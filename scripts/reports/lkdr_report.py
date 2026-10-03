@@ -589,7 +589,11 @@ def require_tables(conn: sqlite3.Connection) -> None:
 
 
 def latest_receipt_datetime(conn: sqlite3.Connection) -> datetime:
-    row = conn.execute("select max(date_time) from fiscal_data").fetchone()
+    # datetime() нормализует строки с разными офсетами (+03:00, +05:00)
+    # к UTC: лексикографический max() на смешанных зонах ошибался бы.
+    row = conn.execute(
+        "select date_time from fiscal_data order by datetime(date_time) desc limit 1"
+    ).fetchone()
     if not row or row[0] is None:
         raise SystemExit("No fiscal data found in database")
     return parse_datetime(row[0])
@@ -1120,7 +1124,7 @@ def build_period_report(
         from fiscal_data fd
         join receipts r on r.key = fd.receipt_key
         left join brands b on b.id = r.brand_id
-        where fd.date_time >= ? and fd.date_time <= ?
+        where datetime(fd.date_time) >= datetime(?) and datetime(fd.date_time) <= datetime(?)
         """,
         (start.isoformat(sep=" "), end.isoformat(sep=" ")),
     ).fetchall()
@@ -1172,7 +1176,7 @@ def build_period_report(
             item.sum
         from fiscal_data_items item
         join fiscal_data fd on fd.receipt_key = item.receipt_key
-        where fd.date_time >= ? and fd.date_time <= ?
+        where datetime(fd.date_time) >= datetime(?) and datetime(fd.date_time) <= datetime(?)
         """,
         (start.isoformat(sep=" "), end.isoformat(sep=" ")),
     ).fetchall()
@@ -1240,7 +1244,13 @@ def run_report(
     conn.row_factory = sqlite3.Row
     require_tables(conn)
 
-    end = as_of or latest_receipt_datetime(conn)
+    latest = latest_receipt_datetime(conn)
+    end = as_of or latest
+    if end.tzinfo is None and latest.tzinfo is not None:
+        # --as-of без зоны: считаем стенными часами в той же зоне,
+        # что и данные (иначе граница периода уедет на часы).
+        end = end.replace(tzinfo=latest.tzinfo)
+
     start = end - timedelta(days=days)
     previous_end = start
     previous_start = previous_end - timedelta(days=days)

@@ -321,7 +321,13 @@ def collect(
     args: argparse.Namespace,
     private_categories: list[str] | None = None,
 ) -> dict:
-    end = args.as_of or base.latest_receipt_datetime(conn)
+    latest = base.latest_receipt_datetime(conn)
+    end = args.as_of or latest
+    if end.tzinfo is None and latest.tzinfo is not None:
+        # --as-of без зоны: считаем стенными часами в той же зоне, что и
+        # данные (как в lkdr_report).
+        end = end.replace(tzinfo=latest.tzinfo)
+
     start = end - timedelta(days=args.days)
     previous_end = start
     previous_start = previous_end - timedelta(days=args.days)

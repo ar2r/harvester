@@ -16,7 +16,7 @@ import sys
 import tempfile
 import unittest
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -1158,6 +1158,93 @@ class ExampleReportTests(unittest.TestCase):
         proc = self.run_example("--db", "/nonexistent/lkdr.db")
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("не найдена", proc.stderr)
+
+
+def make_tz_test_db(path: Path) -> None:
+    """База со смешанными офсетами (+03:00 и +05:00): строковый порядок
+    дат расходится с хронологическим (KZ-чеки при российских)."""
+    make_ai_test_db(path)
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "update fiscal_data set date_time = ? where receipt_key = ?",
+        [
+            ("2026-09-01 12:00:00+03:00", "c1"),
+            ("2026-09-05 20:00:00+05:00", "c2"),
+            ("2026-09-08 18:00:00+03:00", "c3"),
+            ("2026-09-10 08:30:00+03:00", "c5"),
+        ],
+    )
+    # 10:15+05:00 = 08:15+03:00: фактически ПОЗЖЕ c5 на 15 минут строки,
+    # но лексикографически строка больше — старый max() ошибался бы.
+    for key, when, store in (
+        ("c6", "2026-09-10 10:15:00+05:00", "Магазин Г"),
+        ("c7", "2026-09-10 08:30:00+03:00", "Магазин Д"),
+    ):
+        connection.execute(
+            "insert into receipts values (?,?,?,?,?,?,?,?,?,?,?,NULL)",
+            (key, "79000000001", None, "INDIVIDUAL", when, "1", "d" + key, store, "7700000001", when, "100.00"),
+        )
+        connection.execute(
+            "insert into fiscal_data values (?,?,?,?,?,?,?,?,?)",
+            (key, when, 100.0, 1, 0.0, store, "г. Москва", store, "7700000001"),
+        )
+        connection.execute(
+            "insert into fiscal_data_items values (?,?,?,?,?,?,?,?,?,?)",
+            (key, 1, "Молоко 3.2%", 10, 4, 100.0, 1, None, 1, 100.0),
+        )
+
+    connection.commit()
+    connection.close()
+
+
+class MixedTimezoneTests(unittest.TestCase):
+    def test_latest_receipt_datetime_uses_real_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "tz.db"
+            make_tz_test_db(db)
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            latest = base_module.latest_receipt_datetime(conn)
+            conn.close()
+            # Хронологически свежий — 08:30+03:00 (= 05:30 UTC); строковый
+            # max() выбрал бы 10:15+05:00 (= 05:15 UTC).
+            expected = datetime.fromisoformat("2026-09-10 08:30:00+03:00")
+            self.assertEqual(latest, expected)
+
+    def test_period_boundaries_include_cross_offset_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "tz.db"
+            make_tz_test_db(db)
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            end = datetime.fromisoformat("2026-09-10 08:30:00+03:00")
+            start = end - timedelta(days=60)
+            report = base_module.build_period_report(conn, start, end, {}, {})
+            conn.close()
+            stats = report.stats_by_currency["RUB"]
+            # c6 (10:15+05 = 05:15 UTC) фактически до конца периода и c7
+            # (08:30+03, ровно на границе) — обе внутри; строковое
+            # сравнение теряло бы обе.
+            self.assertEqual(stats.count, 6)
+            self.assertEqual(stats.refund_count, 1)
+
+    def test_as_of_without_seconds_keeps_boundary_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "tz.db"
+            make_tz_test_db(db)
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db),
+                "--days", "30",
+                "--as-of", "2026-09-10 08:30",
+                "--color", "never",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            # c7 ровно на границе 08:30+03:00: без секунд в --as-of старое
+            # строковое сравнение выкидывало его из периода.
+            self.assertIn("Магазин Д", proc.stdout)
+            self.assertIn("Магазин Г", proc.stdout)
+            self.assertIn("Покупочные чеки", proc.stdout)
 
 
 if __name__ == "__main__":
