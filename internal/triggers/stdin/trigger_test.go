@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
@@ -24,8 +25,9 @@ type fakeRun struct {
 }
 
 type fakeJobs struct {
-	runs   []fakeRun
-	failed map[string]bool
+	runs    []fakeRun
+	failed  map[string]bool
+	partial map[string]bool
 }
 
 func (f *fakeJobs) Info() []jobs.Info {
@@ -43,8 +45,11 @@ func (f *fakeJobs) Run(_ jobs.Context, _ time.Time, userID string, jobIDs []stri
 	results := make([]jobs.Result, len(jobIDs))
 	for i, jobID := range jobIDs {
 		result := jobs.Result{JobID: jobID}
-		if f.failed[jobID] {
+		switch {
+		case f.failed[jobID]:
 			result.Error = errors.New("job failed")
+		case f.partial[jobID]:
+			result.Error = fmt.Errorf("внутренняя ошибка API, загрузка остановлена: %w", jobs.ErrIncomplete)
 		}
 
 		results[i] = result
@@ -354,6 +359,73 @@ func TestTriggerReturnsOnContextCancel(t *testing.T) {
 	if !reflect.DeepEqual(codes, []int{0}) {
 		t.Fatalf("expected exit code 0 on cancel, got %v", codes)
 	}
+}
+
+func TestTriggerPartialRunWarnsWithoutFailingCode(t *testing.T) {
+	var out bytes.Buffer
+	registry := &fakeJobs{partial: map[string]bool{"lkdr": true}}
+	codes := make([]int, 0, 1)
+
+	trigger, err := NewTrigger(TriggerParams{
+		Clock:  based.StandardClock,
+		User:   "a",
+		Reader: strings.NewReader(""),
+		Writer: &out,
+		Exit:   func(code int) { codes = append(codes, code) },
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trigger.Run(testContext(), registry)
+
+	if !reflect.DeepEqual(codes, []int{0}) {
+		t.Fatalf("partial run must keep exit code 0, got %v", codes)
+	}
+
+	if !strings.Contains(out.String(), "⚠ a/lkdr") || !strings.Contains(out.String(), "неполные") {
+		t.Fatalf("expected partial warning output, got %q", out.String())
+	}
+
+	if strings.Contains(out.String(), "✘") {
+		t.Fatalf("partial run must not be reported as failure, got %q", out.String())
+	}
+}
+
+func TestTriggerJSONPartialRunEmitsPartialStatus(t *testing.T) {
+	var out bytes.Buffer
+	registry := &fakeJobs{partial: map[string]bool{"lkdr": true}}
+	codes := make([]int, 0, 1)
+
+	trigger, err := NewTrigger(TriggerParams{
+		Clock:  based.StandardClock,
+		User:   "a",
+		JSON:   true,
+		Reader: strings.NewReader(""),
+		Writer: &out,
+		Exit:   func(code int) { codes = append(codes, code) },
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trigger.Run(testContext(), registry)
+
+	if !reflect.DeepEqual(codes, []int{0}) {
+		t.Fatalf("partial run must keep exit code 0, got %v", codes)
+	}
+
+	assertJSONLines(t, out.String(), []map[string]any{
+		{
+			"event":   "job",
+			"status":  "partial",
+			"user":    "a",
+			"job":     "lkdr",
+			"warning": "внутренняя ошибка API, загрузка остановлена: " + jobs.ErrIncomplete.Error(),
+		},
+	})
 }
 
 func TestTriggerAllUsersRunsEachConfiguredUserInOrder(t *testing.T) {

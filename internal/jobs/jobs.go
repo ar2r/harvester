@@ -12,6 +12,12 @@ const All = "all"
 
 var ErrJobUnconfigured = errors.New("job not configured")
 
+// ErrIncomplete — задача выполнена частично: данные за запуск неполные,
+// но ошибка не фатальная (например, API вернул известную внутреннюю
+// ошибку и загрузка остановлена до конца пагинации). Триггеры печатают
+// такой запуск с пометкой ⚠ и не портят код возврата.
+var ErrIncomplete = errors.New("данные за запуск неполные")
+
 type Interface interface {
 	Info() Info
 	Run(ctx Context, now time.Time, userID string) error

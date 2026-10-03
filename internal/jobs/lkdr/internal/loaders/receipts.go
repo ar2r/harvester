@@ -7,6 +7,8 @@ import (
 
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/ar2r/ledger-fox/internal/database"
 	"github.com/ar2r/ledger-fox/internal/jobs"
@@ -56,10 +58,18 @@ func (l Receipts) Load(ctx jobs.Context, client Client, db database.DB) (_ []Int
 		maxRequests: l.MaxRequests,
 	}
 
-	return nil, jobs.Batch[int]{
+	errs = jobs.Batch[int]{
 		Key:  "offset",
 		Size: l.BatchSize,
 	}.Run(ctx, batch.load)
+
+	// Мягкая остановка — не ошибка запуска, но итог неполный: помечаем,
+	// чтобы вывод показал ⚠ вместо безоговорочного ✔.
+	if batch.softStopped {
+		errs = multierr.Append(errs, errors.Wrap(jobs.ErrIncomplete, "внутренняя ошибка API, загрузка остановлена"))
+	}
+
+	return nil, errs
 }
 
 type receiptsBatch struct {
@@ -68,10 +78,12 @@ type receiptsBatch struct {
 	db       database.DB
 	dateFrom *lkdr.Date
 	// maxRequests — лимит запросов выгрузки за запуск (0 — без лимита);
-	// requests — счётчик сделанных запросов, limited — остановка по лимиту.
+	// requests — счётчик сделанных запросов, limited — остановка по лимиту,
+	// softStopped — API вернул известную внутреннюю ошибку.
 	maxRequests int
 	requests    int
 	limited     bool
+	softStopped bool
 }
 
 func (l *receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffset *int, errs error) {
@@ -92,6 +104,7 @@ func (l *receiptsBatch) load(ctx jobs.Context, offset int, limit int) (nextOffse
 	if err != nil {
 		msg := "failed to get data from api"
 		if strings.Contains(err.Error(), "Внутреняя ошибка. Попробуйте еще раз") {
+			l.softStopped = true
 			ctx.Warn(msg, logs.Error(err))
 			return
 		}

@@ -13,6 +13,7 @@ import (
 	"github.com/jfk9w-go/based"
 	"go.uber.org/multierr"
 
+	"github.com/ar2r/ledger-fox/internal/jobs"
 	"github.com/ar2r/ledger-fox/internal/logs"
 	"github.com/ar2r/ledger-fox/internal/triggers"
 )
@@ -135,15 +136,32 @@ func (t *Trigger) run(ctx triggers.Context, job triggers.Jobs, userID string) (c
 				continue
 			}
 
-			code = 1
-			for _, err := range multierr.Errors(result.Error) {
+			errs := multierr.Errors(result.Error)
+			for _, err := range incompleteOnly(errs) {
 				t.emit(ctx, map[string]any{
-					"event":  "job",
-					"status": "error",
-					"user":   userID,
-					"job":    result.JobID,
-					"error":  err.Error(),
+					"event":   "job",
+					"status":  "partial",
+					"user":    userID,
+					"job":     result.JobID,
+					"warning": err.Error(),
 				})
+			}
+
+			if hasFatal(errs) {
+				code = 1
+				for _, err := range errs {
+					if errors.Is(err, jobs.ErrIncomplete) {
+						continue
+					}
+
+					t.emit(ctx, map[string]any{
+						"event":  "job",
+						"status": "error",
+						"user":   userID,
+						"job":    result.JobID,
+						"error":  err.Error(),
+					})
+				}
 			}
 		}
 
@@ -158,9 +176,27 @@ func (t *Trigger) run(ctx triggers.Context, job triggers.Jobs, userID string) (c
 			reply.WriteString("/")
 			reply.WriteString(result.JobID)
 			reply.WriteRune('\n')
-		} else {
+			continue
+		}
+
+		errs := multierr.Errors(result.Error)
+		for _, err := range incompleteOnly(errs) {
+			reply.WriteString(" ⚠ ")
+			reply.WriteString(userID)
+			reply.WriteString("/")
+			reply.WriteString(result.JobID)
+			reply.WriteString(": ")
+			reply.WriteString(err.Error())
+			reply.WriteRune('\n')
+		}
+
+		if hasFatal(errs) {
 			code = 1
-			for _, err := range multierr.Errors(result.Error) {
+			for _, err := range errs {
+				if errors.Is(err, jobs.ErrIncomplete) {
+					continue
+				}
+
 				reply.WriteString(" ✘ ")
 				reply.WriteString(userID)
 				reply.WriteString("/")
@@ -207,4 +243,27 @@ func (t *Trigger) emit(ctx triggers.Context, value map[string]any) {
 	if err := json.NewEncoder(t.out).Encode(value); err != nil {
 		ctx.Error("failed to print result", logs.Error(err))
 	}
+}
+
+// incompleteOnly выделяет из списка ошибок помеченные jobs.ErrIncomplete:
+// они означают частично выполненный запуск (⚠) и не портят код возврата.
+func incompleteOnly(errs []error) []error {
+	var incomplete []error
+	for _, err := range errs {
+		if errors.Is(err, jobs.ErrIncomplete) {
+			incomplete = append(incomplete, err)
+		}
+	}
+
+	return incomplete
+}
+
+func hasFatal(errs []error) bool {
+	for _, err := range errs {
+		if !errors.Is(err, jobs.ErrIncomplete) {
+			return true
+		}
+	}
+
+	return false
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
 
+	"github.com/ar2r/ledger-fox/internal/jobs"
 	"github.com/ar2r/ledger-fox/internal/jobs/lkdr/internal/entities"
 )
 
@@ -158,8 +159,10 @@ func TestReceiptsSkipsKnownAPIError(t *testing.T) {
 		return nil, errors.New("lkdr: Внутреняя ошибка. Попробуйте еще раз")
 	}}
 
-	if _, errs := (Receipts{Phone: "79000000000", BatchSize: 100}).Load(testJobsContext(), client, db); errs != nil {
-		t.Fatalf("expected known internal api error to be skipped, got: %v", errs)
+	// Мягкая остановка не фатальна, но помечает запуск как неполный.
+	_, errs := (Receipts{Phone: "79000000000", BatchSize: 100}).Load(testJobsContext(), client, db)
+	if !errors.Is(errs, jobs.ErrIncomplete) {
+		t.Fatalf("expected ErrIncomplete on known internal api error, got: %v", errs)
 	}
 }
 
