@@ -10,8 +10,10 @@
     · текст и числа        → плейсхолдеры вида {{ total_current }}, {{ period_days }};
     · геометрия полос/графика (width, координаты SVG) → образцовые круглые значения,
       генератор заменяет их реальными процентами/точками;
-    · повторяющиеся блоки (метрики, AI-карточки, категории, строки таблиц) —
-      по одному–двум примерам на блок, генератор множит по данным;
+  · повторяющиеся блоки (метрики, AI-карточки, категории, строки таблиц) —
+    по одному–двум примерам на блок, генератор множит по данным;
+    повторяемые примеры обрамлены маркерами <!-- block:name --> … <!-- /block:name -->,
+    генератор (scripts/reports/ai_report.py) заменяет блок целиком;
     · CSS перенесён из боевого отчёта без изменений, внешний вид совпадает один в один;
     · файл автономен: без внешних загрузок, шрифтов и скриптов (кроме window.print).
 
@@ -146,6 +148,7 @@
   </div>
 
   <!-- Парные полосы: один блок .paired на показатель; ширины — реальные проценты от общей шкалы -->
+  <!-- block:compare-paired -->
   <div class="paired">
     <div class="bar-label">
       <strong>{{ compare_row_label }} · общая шкала</strong>
@@ -162,6 +165,7 @@
       <b>{{ compare_row_current_value }}</b>
     </div>
   </div>
+  <!-- /block:compare-paired -->
   <!-- … повторить .paired для каждого показателя … -->
 
   <!-- Сводная таблица показателей -->
@@ -176,12 +180,14 @@
         </tr>
       </thead>
       <tbody>
+        <!-- block:compare-row -->
         <tr>
           <td>{{ compare_metric_name }}</td>
           <td class="num">{{ compare_metric_previous }}</td>
           <td class="num">{{ compare_metric_current }}</td>
           <td class="num {{ diff_class}}">{{ compare_metric_diff }}</td>
         </tr>
+        <!-- /block:compare-row -->
         <!-- … строки по показателям; diff_class → increase | decrease … -->
       </tbody>
     </table>
@@ -202,6 +208,7 @@
 
   <!-- Сетка карточек: индексы 01..NN, по одной теме на карточку -->
   <div class="ai-grid">
+    <!-- block:ai-cards -->
     <article class="ai-card">
       <div class="index">{{ ai_index_1 }} · {{ ai_card_1_theme }}</div>
       <h3>{{ ai_card_1_title }}</h3>
@@ -212,6 +219,7 @@
       <h3>{{ ai_card_2_title }}</h3>
       <p>{{ ai_card_2_body }}</p>
     </article>
+    <!-- /block:ai-cards -->
     <!-- … карточки по числу тем … -->
   </div>
 
@@ -233,6 +241,7 @@
     <div class="panel">
       <h3>Категории: раньше и сейчас</h3>
       <p class="footnote">{{ categories_panel_footnote }}</p>
+      <!-- block:category-paired -->
       <div class="paired">
         <div class="bar-label">
           <strong>{{ category_name }}</strong>
@@ -249,15 +258,18 @@
           <b>{{ category_current_value }}</b>
         </div>
       </div>
+      <!-- /block:category-paired -->
       <!-- … .paired на категорию … -->
     </div>
     <div class="panel">
       <h3>{{ second_panel_title }}</h3>
       <div class="big-number">{{ big_number_value }}</div>
+      <!-- block:food-row -->
       <div class="food-row">
         <span>{{ food_row_name }}</span>
         <b>{{ food_row_value }}<br><small>{{ food_row_share }}</small></b>
       </div>
+      <!-- /block:food-row -->
       <!-- … .food-row на позицию … -->
     </div>
   </div>
@@ -272,6 +284,7 @@
 
     <!-- Одна строка .category-visual на категорию;
          left/right — отступы .signed-bar от .zero-line в процентах общей шкалы -->
+    <!-- block:category-visual -->
     <div class="category-visual">
       <div class="category-caption">
         <span class="category-rank">{{ category_rank }}</span>
@@ -348,6 +361,7 @@
         <div class="share-track"><span style="width:35%"></span></div>
       </div>
     </div>
+    <!-- /block:category-visual -->
     <!-- … .category-visual на каждую категорию … -->
   </div>
 
@@ -387,8 +401,8 @@
       <svg viewBox="0 0 1000 330" role="img" aria-labelledby="cumulative-title cumulative-desc">
         <title id="cumulative-title">{{ chart_title }}</title>
         <desc id="cumulative-desc">{{ chart_desc }}</desc>
-        <!-- зона без свежих данных (опционально) -->
-        <rect x="934" y="35" width="28" height="235" fill="#f8eae1"/>
+        <!-- block:chart-empty-zone --><!-- зона без свежих данных (опционально) -->
+        <rect x="934" y="35" width="28" height="235" fill="#f8eae1"/><!-- /block:chart-empty-zone -->
         <!-- сетка и подписи оси Y: 0 … {{ axis_max }} -->
         <line x1="75" y1="270" x2="962" y2="270" stroke="#e3dce6"/>
         <text x="63" y="274" text-anchor="end" fill="#666174" font-size="13">0</text>
@@ -438,6 +452,7 @@
           </tr>
         </thead>
         <tbody>
+          <!-- block:store-row -->
           <tr>
             <td>{{ store_name }}</td>
             <td class="num">{{ store_current }}</td>
@@ -451,16 +466,19 @@
               </span>
             </td>
           </tr>
+          <!-- /block:store-row -->
           <!-- … строка на магазин; ширины mini-series — доли от максимума таблицы … -->
         </tbody>
       </table>
     </div>
 
     <h3>{{ stores_highlight_title }}</h3>
+    <!-- block:stores-highlight -->
     <div class="food-row">
       <span>{{ stores_highlight_name }}</span>
       <b>{{ stores_highlight_value }}</b>
     </div>
+    <!-- /block:stores-highlight -->
     <!-- … подсветки главных изменений … -->
   </div>
 </section>
@@ -486,12 +504,14 @@
           </tr>
         </thead>
         <tbody>
+          <!-- block:item-row -->
           <tr>
             <td>{{ item_name }}</td>
             <td class="num">{{ item_receipts }}</td>
             <td class="num">{{ item_qty }}</td>
             <td class="num">{{ item_net_sum }}</td>
           </tr>
+          <!-- /block:item-row -->
           <!-- … строки повторяющихся покупок … -->
         </tbody>
       </table>
@@ -509,8 +529,10 @@
   </div>
   <div class="panel">
     <ol class="steps">
+      <!-- block:action-step -->
       <li><strong>{{ step_1_head }}</strong> {{ step_1_body }}</li>
       <li><strong>{{ step_2_head }}</strong> {{ step_2_body }}</li>
+      <!-- /block:action-step -->
       <!-- … пункты плана … -->
     </ol>
   </div>
@@ -546,8 +568,10 @@
     <summary>{{ method_details_summary }}</summary>
     <div>
       <ul class="method">
+        <!-- block:method-rule -->
         <li>{{ method_rule_1 }}</li>
         <li>{{ method_rule_2 }}</li>
+        <!-- /block:method-rule -->
         <!-- … правила расчёта … -->
       </ul>
     </div>

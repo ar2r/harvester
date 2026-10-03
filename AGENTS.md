@@ -56,6 +56,7 @@ PATH="$PWD/.venv/bin:$PATH" make lkdr-report
 
 - Меню `make report` (`scripts/report.py`): автодискавери `scripts/reports/*.py`; id = имя файла; `_`-префикс — служебные, в меню не попадают; заголовок меню = первая строка docstring скрипта. Без меню: `./scripts/report.py <id> [args]`, `--list`.
 - Новые отчёты: копировать `scripts/reports/_template.py` (как добавлять — docs/development.md, раздел «Python-отчёты»); пример по правилам — `scripts/reports/example.py`. Автотесты отчётов — `scripts/tests/test_reports.py` (unittest; запускаются `make test` вместе с Go-тестами, поэтому `make test` требует python3).
+- HTML-отчёт месяца: `make ai-report` → `scripts/reports/ai_report.py` рендерит шаблон `scripts/templates/lkdr-report.html` в `reports/lkdr-YYYY-MM.html` (месяц = конец периода: свежий чек или `--as-of`; перезапуск обновляет файл месяца; расчёты переиспользует `lkdr_report.py`). Повторяемые блоки шаблона обрамлены маркерами `<!-- block:name -->`…`<!-- /block:name -->` — правки вёрстки делать внутри блоков, сохраняя маркеры. AI-карточки — JSON от `codex exec` (`--no-ai` отключить); фолбэк — детерминированные карточки из данных.
 
 - Обязательные таблицы: `receipts`, `brands`, `fiscal_data`, `fiscal_data_items`; перед запуском проверять существование БД.
 - Конец периода — `max(fiscal_data.date_time)` (переопределяется `--as-of`); текущий период сравнивается с предыдущим той же длины, обе границы включены.

@@ -8,8 +8,9 @@ LKDR_AI_ARGS ?=
 RUN_USER ?= all
 CONFIG_FILE ?= ./config.json
 REPORT_ARGS ?=
+AI_REPORT_ARGS ?=
 
-.PHONY: test bin build run parse report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
+.PHONY: test bin build run parse report ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
 
 test:
 	go test -v ./...
@@ -30,6 +31,9 @@ parse: build
 
 report:
 	./scripts/report.py $(REPORT_ARGS)
+
+ai-report:
+	./scripts/reports/ai_report.py --db $(LKDR_DB) $(AI_REPORT_ARGS)
 
 clean:
 	rm -rf bin/*

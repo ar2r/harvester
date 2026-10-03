@@ -113,6 +113,127 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("Отчёт не найден", proc.stderr)
 
 
+def make_ai_test_db(path: Path) -> None:
+    """Синтетическая база для HTML-отчёта: два периода, возврат, предоплата."""
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table receipts (
+            key text primary key, user_phone text, buyer text, buyer_type text,
+            created_date text, fiscal_document_number text, fiscal_drive_number text,
+            kkt_owner text, kkt_owner_inn text, receive_date text, total_sum text,
+            brand_id integer
+        );
+        create table brands (id integer primary key, name text, description text, image text);
+        create table fiscal_data (
+            receipt_key text primary key, date_time text, total_sum real,
+            operation_type integer, prepaid_sum real, retail_place text,
+            retail_place_address text, user text, user_inn text
+        );
+        create table fiscal_data_items (
+            receipt_key text, db_idx integer, name text, nds integer,
+            payment_type integer, price real, product_type integer,
+            provider_inn text, quantity real, sum real,
+            primary key (receipt_key, db_idx)
+        );
+        """
+    )
+    receipts = [
+        ("p1", "2026-08-01 12:00:00", 800.0, 1, 0.0, "Магазин А"),
+        ("c1", "2026-09-01 12:00:00", 1000.0, 1, 0.0, "Магазин А"),
+        ("c2", "2026-09-05 15:00:00", 600.0, 1, 0.0, "Магазин Б"),
+        ("c3", "2026-09-08 18:00:00", 300.0, 2, 0.0, "Магазин Б"),
+        ("c4", "2026-09-09 10:00:00", 500.0, 1, 500.0, "Магазин А"),
+        ("c5", "2026-09-10 20:00:00", 400.0, 1, 0.0, "Магазин В"),
+    ]
+    for key, when, total, operation, prepaid, store in receipts:
+        connection.execute(
+            "insert into receipts values (?,?,?,?,?,?,?,?,?,?,?,NULL)",
+            (key, "79000000001", None, "INDIVIDUAL", when, "1", "d" + key, store, "7700000001", when, str(total)),
+        )
+        connection.execute(
+            "insert into fiscal_data values (?,?,?,?,?,?,?,?,?)",
+            (key, when, total, operation, prepaid, store, "г. Москва", store, "7700000001"),
+        )
+
+    items = [
+        ("p1", "Молоко 3.2%", 2, 100.0), ("p1", "Сыр российский", 1, 700.0),
+        ("c1", "Молоко 3.2%", 4, 200.0), ("c1", "Сыр российский", 1, 300.0), ("c1", "Кофе в зернах", 1, 500.0),
+        ("c2", "Молоко 3.2%", 2, 100.0), ("c2", "Хлеб бородинский", 3, 120.0),
+        ("c3", "Хлеб бородинский", -1, -40.0),
+        ("c5", "Кофе в зернах", 1, 400.0),
+    ]
+    counters: dict[str, int] = {}
+    for key, name, quantity, total in items:
+        counters[key] = counters.get(key, 0) + 1
+        connection.execute(
+            "insert into fiscal_data_items values (?,?,?,?,?,?,?,?,?,?)",
+            (key, counters[key], name, 10, 4, abs(total / quantity) if quantity else 0, 1, None, quantity, total),
+        )
+    connection.commit()
+    connection.close()
+
+
+class AiReportTests(unittest.TestCase):
+    def run_ai_report(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return run_python(REPORTS_DIR / "ai_report.py", *args)
+
+    def test_creates_month_file_without_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            proc = self.run_ai_report("--db", str(db), "--out-dir", str(out), "--no-ai")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+            report = out / "lkdr-2026-09.html"
+            self.assertTrue(report.exists(), proc.stdout)
+            content = report.read_text(encoding="utf-8")
+            self.assertIn("Магазин А", content)
+            self.assertIn("1 700.00 ₽", content)
+            self.assertIn("Месяц в чеках", content)
+            self.assertNotIn("{{", content)
+            self.assertNotIn("<!--", content)
+
+    def test_rerun_updates_same_month_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            self.run_ai_report("--db", str(db), "--out-dir", str(out), "--no-ai")
+
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "insert into receipts values ('c6','79000000001',NULL,'INDIVIDUAL','2026-09-12 10:00:00','1','dc6','Новый Магазин','7700000001','2026-09-12 10:00:00','250.0',NULL)"
+            )
+            connection.execute(
+                "insert into fiscal_data values ('c6','2026-09-12 10:00:00',250.0,1,0.0,'Новый Магазин','г. Москва','Новый Магазин','7700000001')"
+            )
+            connection.commit()
+            connection.close()
+
+            proc = self.run_ai_report("--db", str(db), "--out-dir", str(out), "--no-ai")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(list(out.iterdir()), [out / "lkdr-2026-09.html"])
+            self.assertIn("Новый Магазин", (out / "lkdr-2026-09.html").read_text(encoding="utf-8"))
+
+    def test_as_of_selects_other_month(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            proc = self.run_ai_report(
+                "--db", str(db), "--out-dir", str(out), "--no-ai", "--as-of", "2026-08-15 12:00"
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((out / "lkdr-2026-08.html").exists(), proc.stdout)
+
+    def test_missing_db_fails_cleanly(self):
+        proc = self.run_ai_report("--db", "/nonexistent/lkdr.db", "--out-dir", "/tmp/lf-ai-missing")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("не найдена", proc.stderr)
+
+
 class ExampleReportTests(unittest.TestCase):
     def run_example(self, *args: str) -> subprocess.CompletedProcess[str]:
         return run_python(REPORTS_DIR / "example.py", *args)
