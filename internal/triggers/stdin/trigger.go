@@ -45,6 +45,10 @@ type Trigger struct {
 	in    io.Reader
 	out   io.Writer
 	exit  func(code int)
+	// lines наполняется единственной горутиной-читателем (Run); канал
+	// закрывается по EOF. Один сканер на всё время жизни триггера, чтобы
+	// повторные ask не теряли строки, считанные в буфер с опережением.
+	lines chan string
 }
 
 func NewTrigger(params TriggerParams) (*Trigger, error) {
@@ -76,6 +80,15 @@ func (t *Trigger) ID() string {
 }
 
 func (t *Trigger) Run(ctx triggers.Context, job triggers.Jobs) {
+	t.lines = make(chan string)
+	go func() {
+		defer close(t.lines)
+		scanner := bufio.NewScanner(t.in)
+		for scanner.Scan() {
+			t.lines <- scanner.Text()
+		}
+	}()
+
 	if t.user == AllUsers && len(t.users) > 0 {
 		code := 0
 		for _, user := range t.users {
@@ -98,7 +111,13 @@ func (t *Trigger) Run(ctx triggers.Context, job triggers.Jobs) {
 	for {
 		userID, err := t.ask(ctx, "Enter user: ")
 		if err != nil {
-			ctx.Error("failed to get user", logs.Error(err))
+			if !errors.Is(err, context.Canceled) {
+				ctx.Error("failed to get user", logs.Error(err))
+			}
+
+			// stdin закрыт (EOF) — процесс завершается сам, а не виснет
+			// в ожидании сигнала.
+			t.exit(0)
 			return
 		}
 
@@ -160,7 +179,7 @@ func (t *Trigger) run(ctx triggers.Context, job triggers.Jobs, userID string) (c
 	return
 }
 
-func (t *Trigger) ask(_ context.Context, prompt string) (string, error) {
+func (t *Trigger) ask(ctx context.Context, prompt string) (string, error) {
 	if t.json {
 		if err := json.NewEncoder(t.out).Encode(map[string]any{"event": "prompt", "message": prompt}); err != nil {
 			return "", err
@@ -169,12 +188,19 @@ func (t *Trigger) ask(_ context.Context, prompt string) (string, error) {
 		return "", err
 	}
 
-	scanner := bufio.NewScanner(t.in)
-	if ok := scanner.Scan(); !ok {
-		return "", errors.New("scan failed")
-	}
+	// Ожидание ввода прерывается отменой контекста (Ctrl+C / остановка
+	// приложения): оставшаяся заблокированной горутина-читатель умирает
+	// вместе с процессом.
+	select {
+	case line, ok := <-t.lines:
+		if !ok {
+			return "", errors.New("stdin closed")
+		}
 
-	return scanner.Text(), nil
+		return line, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (t *Trigger) emit(ctx triggers.Context, value map[string]any) {

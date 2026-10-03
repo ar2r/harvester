@@ -53,9 +53,8 @@ func (f *fakeJobs) Run(_ jobs.Context, _ time.Time, userID string, jobIDs []stri
 	return results
 }
 
-// lineReader имитирует построчный ввод с клавиатуры:
-// bufio.Scanner в ask создаётся на каждый вызов и буферизует данные,
-// поэтому bulk-Reader (например strings.Reader) не годится.
+// lineReader имитирует построчный ввод с клавиатуры: один Read — одна
+// строка. Для сканера на всё время жизни триггера эквивалентен консоли.
 type lineReader struct {
 	lines []string
 	next  int
@@ -236,15 +235,16 @@ func TestTriggerJSONOutputOnSuccess(t *testing.T) {
 func TestTriggerJSONOutputOnFailureAndPrompt(t *testing.T) {
 	var out bytes.Buffer
 	registry := &fakeJobs{failed: map[string]bool{"lkdr": true}}
+	codes := make([]int, 0, 1)
 
-	// В интерактивном режиме триггер — бесконечный REPL: запрашивается
-	// только пользователь, после строки ввода EOF завершает цикл.
+	// В интерактивном режиме триггер — REPL до EOF: после последней
+	// строки ввода процесс завершает сам себя с кодом 0.
 	trigger, err := NewTrigger(TriggerParams{
 		Clock:  based.StandardClock,
 		JSON:   true,
 		Reader: &lineReader{lines: []string{"a"}},
 		Writer: &out,
-		Exit:   func(code int) { t.Fatalf("unexpected exit call: %d", code) },
+		Exit:   func(code int) { codes = append(codes, code) },
 	})
 
 	if err != nil {
@@ -278,6 +278,82 @@ func TestTriggerJSONOutputOnFailureAndPrompt(t *testing.T) {
 	assertJSONLines(t, lines[2], []map[string]any{
 		{"event": "prompt", "message": "Enter user: "},
 	})
+
+	if !reflect.DeepEqual(codes, []int{0}) {
+		t.Fatalf("expected exit code 0 on EOF, got %v", codes)
+	}
+}
+
+func TestTriggerReplReadsBufferedLines(t *testing.T) {
+	var out bytes.Buffer
+	registry := &fakeJobs{}
+
+	// Bulk-ридер отдаёт все строки одним куском: единый сканер триггера
+	// обязан отдать обе строки по очереди, ничего не теряя в буфере.
+	trigger, err := NewTrigger(TriggerParams{
+		Clock:  based.StandardClock,
+		Reader: strings.NewReader("a\nb\n"),
+		Writer: &out,
+		Exit:   func(int) {},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trigger.Run(testContext(), registry)
+
+	expected := []fakeRun{{userID: "a"}, {userID: "b"}}
+	if !reflect.DeepEqual(registry.runs, expected) {
+		t.Fatalf("unexpected runs: %+v, expected %+v", registry.runs, expected)
+	}
+}
+
+// blockingReader никогда не отдаёт данные: имитирует ожидание ввода
+// пользователя без stdin (тест прерывания по отмене контекста).
+type blockingReader struct{}
+
+func (blockingReader) Read([]byte) (int, error) {
+	select {}
+}
+
+func TestTriggerReturnsOnContextCancel(t *testing.T) {
+	var out bytes.Buffer
+	registry := &fakeJobs{}
+	codes := make([]int, 0, 1)
+
+	trigger, err := NewTrigger(TriggerParams{
+		Clock:  based.StandardClock,
+		Reader: blockingReader{},
+		Writer: &out,
+		Exit:   func(code int) { codes = append(codes, code) },
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		trigger.Run(triggers.NewContext(ctx, slog.New(slog.NewTextHandler(io.Discard, nil))), registry)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
+
+	if !reflect.DeepEqual(codes, []int{0}) {
+		t.Fatalf("expected exit code 0 on cancel, got %v", codes)
+	}
 }
 
 func TestTriggerAllUsersRunsEachConfiguredUserInOrder(t *testing.T) {
