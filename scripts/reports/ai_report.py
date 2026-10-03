@@ -360,6 +360,20 @@ def collect(
     other_top = other_rows[: args.top]
     other_total = sum(total for _, _, total in other_rows)
 
+    # Корзина продуктов на неделю: отдельное окно, частота — по срокам
+    # годности. Считается по основной валюте отчёта.
+    basket: dict[str, list[base.BasketEntry]] = {}
+    basket_weekly_total = 0.0
+    basket_days = getattr(args, "basket_days", 180)
+    if basket_days >= 7:
+        basket_report = base.build_period_report(
+            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
+        )
+        baskets = base.build_weekly_basket(basket_report, basket_days, args.top)
+        for bucket, entries in (baskets.get(currency) or {}).items():
+            basket[bucket] = entries
+            basket_weekly_total += sum(entry.weekly_sum for entry in entries)
+
     return {
         "end": end,
         "start": start,
@@ -382,6 +396,9 @@ def collect(
         "other_rest_count": max(len(other_rows) - len(other_top), 0),
         "other_rest_total": sum(total for _, _, total in other_rows[args.top :]),
         "other_total": other_total,
+        "basket": basket,
+        "basket_days": basket_days,
+        "basket_weekly_total": basket_weekly_total,
         "current_report": current,
         "previous_report": previous,
         "last_receipt": base.latest_receipt_datetime(conn),
@@ -706,6 +723,17 @@ def build_render(
         "stores_highlight_title": "Главные изменения по магазинам",
         # Привычки
         "habits_note": "Позиции, встретившиеся более чем в одном чеке",
+        # Корзина на неделю
+        "basket_title": "Корзина продуктов на неделю",
+        "basket_note": (
+            f"регулярные покупки за {data['basket_days']} дней; "
+            f"ориентир трат: {base.money(data['basket_weekly_total'], currency)}/нед"
+        ),
+        "basket_footer": (
+            "Количество — средний расход в неделю за окно корзины; частота закупок — "
+            "по типовому сроку годности: скоропортящееся каждую неделю, "
+            "длительного хранения — раз в 2-4 недели или запасом."
+        ),
         # Действия
         "actions_title": "Что сделать в следующем месяце",
         # Методика
@@ -943,6 +971,33 @@ def build_render(
         share="—",
     )
 
+    T_BASKET_ROW = """          <tr>
+            <td>{name}</td>
+            <td>{bucket}</td>
+            <td class="num">{qty}</td>
+            <td class="num">{total}</td>
+            <td class="num">{shelf}</td>
+          </tr>"""
+    basket_rows = []
+    for bucket in base.BUCKET_ORDER:
+        for entry in data["basket"].get(bucket, []):
+            basket_rows.append(
+                T_BASKET_ROW.format(
+                    name=short_item(entry.name),
+                    bucket=bucket,
+                    qty=f"{entry.weekly_qty:.4g}",
+                    total=base.money(entry.weekly_sum, currency),
+                    shelf=f"~{entry.shelf_days} дн.",
+                )
+            )
+    blocks["basket-row"] = "\n".join(basket_rows) or T_BASKET_ROW.format(
+        name="регулярных продуктовых покупок не найдено",
+        bucket="—",
+        qty="—",
+        total=base.money(0, currency),
+        shelf="—",
+    )
+
     steps = []
     for action in ai.get("actions", [])[:5]:
         if isinstance(action, (list, tuple)):
@@ -976,6 +1031,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--days", default=30, type=int, help="Длина периода сравнения в днях")
     parser.add_argument("--as-of", type=base.parse_datetime, help="Конец отчётного периода (ISO); по умолчанию самый свежий чек")
     parser.add_argument("--top", default=10, type=int, help="Строк в топах")
+    parser.add_argument(
+        "--basket-days",
+        default=180,
+        type=int,
+        help="Окно корзины продуктов, дней (0 отключает секцию корзины)",
+    )
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, type=Path, help="Каталог отчётов (по умолчанию reports)")
     parser.add_argument("--currency", default="auto", help="RUB/KZT или auto — основная валюта периода")
     parser.add_argument("--no-ai", action="store_true", help="Не вызывать AI CLI: карточки из данных")

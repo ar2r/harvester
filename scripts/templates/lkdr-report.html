@@ -20,7 +20,7 @@
     · файл автономен: без внешних загрузок, шрифтов и скриптов (кроме window.print).
 
   Секции: header → nav → metrics → notice → comparison → analysis → structure →
-          daily → stores → habits → actions → method → footer.
+          other → daily → stores → habits → basket → actions → method → footer.
 -->
 <html lang="ru">
 <head>
@@ -81,6 +81,7 @@
   <a href="#other">Прочее</a>
   <a href="#stores">Магазины</a>
   <a href="#habits">Покупки</a>
+  <a href="#basket">Корзина</a>
   <a href="#method">Методика</a>
 </nav>
 
@@ -555,6 +556,44 @@
         </tbody>
       </table>
     </div>
+  </div>
+</section>
+
+<!-- ======================= 06b / КОРЗИНА НА НЕДЕЛЮ ======================= -->
+<section id="basket" class="section">
+  <div class="section-head">
+    <div>
+      <div class="eyebrow">Регулярные закупки</div>
+      <h2>{{ basket_title }}</h2>
+    </div>
+    <small>{{ basket_note }}</small>
+  </div>
+  <div class="panel">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Продукт</th>
+            <th scope="col">Как часто</th>
+            <th scope="col">Кол-во/нед</th>
+            <th scope="col">~Сумма/нед</th>
+            <th scope="col">Срок годности</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- block:basket-row -->
+          <tr>
+            <td>{{ basket_item_name }}</td>
+            <td>{{ basket_item_bucket }}</td>
+            <td class="num">{{ basket_item_qty }}</td>
+            <td class="num">{{ basket_item_sum }}</td>
+            <td class="num">{{ basket_item_shelf }}</td>
+          </tr>
+          <!-- /block:basket-row -->
+        </tbody>
+      </table>
+    </div>
+    <p class="footnote">{{ basket_footer }}</p>
   </div>
 </section>
 

@@ -696,6 +696,111 @@ class MarkdownFormatTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
 
 
+def add_basket_items(db: Path) -> None:
+    """Регулярные продуктовые покупки за 6 месяцев: по 3 чека на позицию."""
+    connection = sqlite3.connect(db)
+    for key, when in (
+        ("b1", "2026-05-01 10:00:00"),
+        ("b2", "2026-06-05 10:00:00"),
+        ("b3", "2026-07-10 10:00:00"),
+    ):
+        connection.execute(
+            "insert into receipts values (?, '79000000001',NULL,'INDIVIDUAL',?,'1',?,'Магазин Е','7700000001',?,'450.0',NULL)",
+            (key, when, "d" + key, when),
+        )
+        connection.execute(
+            "insert into fiscal_data values (?,?,450.0,1,0.0,'Магазин Е','г. Москва','Магазин Е','7700000001')",
+            (key, when),
+        )
+        for index, (name, qty, total) in enumerate(
+            (("Молоко 3.2%", 2, 100.0), ("Сыр российский", 1, 300.0), ("Крупа гречневая", 1, 50.0)),
+            start=1,
+        ):
+            connection.execute(
+                "insert into fiscal_data_items values (?,?,?,?,?,?,?,?,?,?)",
+                (key, index, name, 10, 4, total / qty, 1, None, qty, total),
+            )
+    connection.commit()
+    connection.close()
+
+
+class WeeklyBasketTests(unittest.TestCase):
+    def test_shelf_life_days(self):
+        cases = {
+            "Молоко 3.2% 1л": ("Молочные продукты", 7),
+            "Филе куриное замороженное": ("Мясо и птица", 120),
+            "Зелень свежая": ("Овощи и фрукты", 3),
+            "Сыр российский": ("Молочные продукты", 30),
+            "Крупа гречневая": ("Бакалея", 180),
+            "Яйца С1 10 шт": ("Бакалея", 25),
+            "Хлеб бородинский": ("Хлеб и выпечка", 4),
+            "Пельмени с говядиной": ("Мясо и птица", 120),
+            "Лук репчатый 1кг": ("Овощи и фрукты", 30),
+        }
+        # Жадные маркеры не должны ловить чужие слова.
+        self.assertEqual(base_module.shelf_life_days("Чипсы со вкусом сметана-лук", "Сладости и снеки"), 60)
+        # «Готовая еда» — не продуктовая категория: фолбэк, «сырная» не перехватывается.
+        self.assertEqual(base_module.shelf_life_days("Пицца сырная", "Готовая еда"), 14)
+        for name, (category, expected) in cases.items():
+            self.assertEqual(base_module.shelf_life_days(name, category), expected, name)
+
+    def test_shelf_life_buckets(self):
+        self.assertEqual(base_module.shelf_life_bucket(7), base_module.BUCKET_WEEKLY)
+        self.assertEqual(base_module.shelf_life_bucket(8), base_module.BUCKET_MONTHLY)
+        self.assertEqual(base_module.shelf_life_bucket(90), base_module.BUCKET_MONTHLY)
+        self.assertEqual(base_module.shelf_life_bucket(91), base_module.BUCKET_STOCK)
+
+    def test_text_report_basket_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_basket_items(db)
+
+            proc = run_python(REPORTS_DIR / "lkdr_report.py", "--db", str(db), "--color", "never")
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("Корзина продуктов на неделю (рубли)", proc.stdout)
+            self.assertIn("Каждую неделю", proc.stdout)
+            self.assertIn("Раз в 2-4 недели", proc.stdout)
+            self.assertIn("Запас впрок (месяц+)", proc.stdout)
+            self.assertIn("Молоко 3.2%", proc.stdout)
+            self.assertIn("Крупа гречневая", proc.stdout)
+            self.assertIn("Ориентир трат в неделю по корзине", proc.stdout)
+
+    def test_basket_days_window_filters_old_purchases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_basket_items(db)
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db), "--color", "never", "--basket-days", "30",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("Корзина продуктов на неделю", proc.stdout)
+
+    def test_html_report_basket_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            add_basket_items(db)
+
+            proc = run_python(
+                REPORTS_DIR / "ai_report.py",
+                "--db", str(db), "--out-dir", str(out), "--no-ai",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            content = (out / "lkdr-2026-09.html").read_text(encoding="utf-8")
+            self.assertIn("Корзина продуктов на неделю", content)
+            self.assertIn("Каждую неделю", content)
+            self.assertIn("Молоко 3.2%", content)
+            self.assertIn("~7 дн.", content)
+
+
 class ExampleReportTests(unittest.TestCase):
     def run_example(self, *args: str) -> subprocess.CompletedProcess[str]:
         return run_python(REPORTS_DIR / "example.py", *args)

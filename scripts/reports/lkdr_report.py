@@ -654,6 +654,116 @@ def categorize_item(name: str) -> str:
     return "Прочее"
 
 
+# ---------------------------------------------------------------------------
+# Корзина продуктов на неделю
+# ---------------------------------------------------------------------------
+
+# Типичные сроки годности (в днях) по продуктовым категориям; уточнения —
+# по ключевым словам в названии. Короткий срок → покупать чаще и меньше.
+SHELF_LIFE_DAYS = {
+    "Молочные продукты": 7,
+    "Мясо и птица": 4,
+    "Рыба и морепродукты": 3,
+    "Овощи и фрукты": 10,
+    "Хлеб и выпечка": 4,
+    "Бакалея": 180,
+    "Напитки": 90,
+    "Сладости и снеки": 60,
+}
+
+SHELF_LIFE_OVERRIDES = (
+    ("заморож", 120),
+    ("замороз", 120),
+    ("пельмен", 120),
+    ("вареник", 120),
+    ("морожен", 90),
+    ("зелень", 3),
+    ("картоф", 30),
+    ("лук ", 30),
+    (" лук", 30),
+    ("морков", 30),
+    ("капуст", 30),
+    ("яйц", 25),
+    ("консерв", 365),
+    ("сыр ", 30),
+)
+
+# Позиция регулярная, если куплена минимум столько раз за окно корзины.
+MIN_BASKET_PURCHASES = 3
+
+BUCKET_WEEKLY = "Каждую неделю"
+BUCKET_MONTHLY = "Раз в 2-4 недели"
+BUCKET_STOCK = "Запас впрок (месяц+)"
+BUCKET_ORDER = (BUCKET_WEEKLY, BUCKET_MONTHLY, BUCKET_STOCK)
+
+
+@dataclass
+class BasketEntry:
+    name: str
+    category: str
+    weekly_qty: float
+    weekly_sum: float
+    shelf_days: int
+
+
+def shelf_life_days(name: str, category: str) -> int:
+    normalized = name.casefold()
+    for marker, days in SHELF_LIFE_OVERRIDES:
+        if marker in normalized:
+            return days
+
+    return SHELF_LIFE_DAYS.get(category, 14)
+
+
+def shelf_life_bucket(days: int) -> str:
+    if days <= 7:
+        return BUCKET_WEEKLY
+    if days <= 90:
+        return BUCKET_MONTHLY
+    return BUCKET_STOCK
+
+
+def build_weekly_basket(
+    report: PeriodReport,
+    window_days: int,
+    top: int = 15,
+) -> dict[str, dict[str, list[BasketEntry]]]:
+    """Корзина регулярных продуктов на неделю: {валюта: {бакет: [записи]}}.
+
+    Учитываются только продуктовые категории, купленные MIN_BASKET_PURCHASES+
+    раз за окно; частота закупок определяется сроком годности.
+    """
+    weeks = max(window_days / 7.0, 1.0)
+    baskets: dict[str, dict[str, list[BasketEntry]]] = {}
+    for (currency, name), item in report.items.items():
+        if item.total <= 0 or is_service_item(name):
+            continue
+
+        category = categorize_item(name)
+        if category not in SHELF_LIFE_DAYS:
+            continue
+
+        if len(item.purchase_receipts) < MIN_BASKET_PURCHASES:
+            continue
+
+        entry = BasketEntry(
+            name=name,
+            category=category,
+            weekly_qty=item.quantity / weeks,
+            weekly_sum=item.total / weeks,
+            shelf_days=shelf_life_days(name, category),
+        )
+        buckets = baskets.setdefault(currency, {})
+        buckets.setdefault(shelf_life_bucket(entry.shelf_days), []).append(entry)
+
+    for buckets in baskets.values():
+        for bucket, entries in buckets.items():
+            entries.sort(key=lambda entry: entry.weekly_sum, reverse=True)
+            del entries[top:]
+
+    return baskets
+
+
 def category_totals(item_totals: Mapping[str, float]) -> defaultdict[str, float]:
     totals: defaultdict[str, float] = defaultdict(float)
     for name, total in item_totals.items():
@@ -1013,6 +1123,7 @@ def run_report(
     max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
     private_categories: list[str] | None = None,
     report_format: str = "text",
+    basket_days: int = 180,
 ) -> None:
     if days < 1:
         raise SystemExit("--days must be at least 1")
@@ -1491,6 +1602,48 @@ def run_report(
             )
             print_ai_summary(prompt, ai_command, ai_timeout)
 
+    # Корзина продуктов на неделю: по регулярным покупкам за отдельное
+    # окно (по умолчанию 6 месяцев), частота — по срокам годности.
+    if basket_days >= 7:
+        basket_report = build_period_report(
+            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
+        )
+        baskets = build_weekly_basket(basket_report, basket_days, top)
+        for currency, buckets in baskets.items():
+            currency_label = CURRENCY_NAMES.get(currency, currency)
+            weekly_total = sum(
+                entry.weekly_sum for entries in buckets.values() for entry in entries
+            )
+            print_header(f"Корзина продуктов на неделю ({currency_label})")
+            print(
+                COLOR.muted(
+                    f"Регулярные покупки за последние {basket_days} дней "
+                    f"({MIN_BASKET_PURCHASES}+ чеков на позицию); частота закупок — "
+                    "по типовому сроку годности, количество — средний расход в неделю."
+                )
+            )
+            for bucket in BUCKET_ORDER:
+                entries = buckets.get(bucket)
+                if not entries:
+                    continue
+
+                print(f"Топ-{len(entries)} · {bucket}")
+                print_table(
+                    ("Продукт", "Кол-во/нед", "~Сумма/нед", "Срок годности"),
+                    (
+                        (
+                            short_item(entry.name),
+                            f"{entry.weekly_qty:.4g}",
+                            money(entry.weekly_sum, currency),
+                            f"~{entry.shelf_days} дн.",
+                        )
+                        for entry in entries
+                    ),
+                )
+
+            print(f"Ориентир трат в неделю по корзине: {money(weekly_total, currency)}.")
+            print()
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1515,6 +1668,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Дата и время конца отчета в ISO-формате, по умолчанию самый свежий чек",
     )
     parser.add_argument("--top", default=10, type=int, help="Количество строк в топах")
+    parser.add_argument(
+        "--basket-days",
+        default=180,
+        type=int,
+        help="Окно корзины продуктов на неделю, дней (3-6 месяцев; 0 отключает секцию)",
+    )
     parser.add_argument(
         "--color",
         choices=("auto", "always", "never"),
@@ -1584,6 +1743,7 @@ def main() -> None:
         max_item_name_chars,
         private_categories,
         args.format,
+        args.basket_days,
     )
 
 
