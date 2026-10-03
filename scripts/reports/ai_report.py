@@ -5,9 +5,15 @@
 отчётного периода (самый свежий чек в базе или --as-of), поэтому в каждом
 месяце получается свой файл, а перезапуск команды просто обновляет его.
 
+Отчёт собран из трёх частей-подотчётов (см. scripts/templates/lkdr-report.html):
+«Анализ» — AI-интерпретация, действия, сравнение периодов, категории, магазины,
+привычки; «Графики» — накопленные расходы и недельный ритм; «Закупка на
+неделю» — продуктовая корзина с сезонными поправками и AI-планом закупки.
+
 Расчёты переиспользует scripts/reports/lkdr_report.py (периоды, категории,
-валюты). AI-карточки запрашиваются у Codex CLI как JSON; если CLI недоступен
-или ответил не по схеме, карточки строятся детерминированно из данных.
+валюты, корзина, сезонность). AI-карточки и план закупки запрашиваются у
+AI CLI как JSON (два вызова, агент — ai.command); если CLI недоступен или
+ответил не по схеме, обе секции строятся детерминированно из данных.
 
 Запуск: make ai-report | ./scripts/reports/ai_report.py --db lkdr.db [--no-ai]
 """
@@ -34,10 +40,9 @@ import lkdr_report as base
 DEFAULT_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "lkdr-report.html"
 DEFAULT_OUT_DIR = Path("reports")
 
-MONTHS_RU = {
-    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
-    7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
-}
+WEEKS_ON_CHART = 10
+
+MONTHS_RU = base.MONTHS_RU
 
 # ---------------------------------------------------------------------------
 # Рендеринг шаблона
@@ -71,25 +76,6 @@ def apply_scalars(template: str, values: dict[str, object]) -> str:
 
 # Подструктуры повторяемых блоков — зеркалируют примеры из шаблона-прототипа.
 
-T_PAIRED = """      <div class="paired">
-        <div class="bar-label">
-          <strong>{label}</strong>
-          <span class="difference">{diff}</span>
-        </div>
-        <div class="pair-line">
-          <span>Раньше</span>
-          <div class="pair-track"><div class="previous" style="width:{prev_pct}%"></div></div>
-          <b>{prev}</b>
-        </div>
-        <div class="pair-line">
-          <span>Сейчас</span>
-          <div class="pair-track"><div class="current" style="width:{cur_pct}%"></div></div>
-          <b>{cur}</b>
-        </div>
-      </div>"""
-
-T_COMPARE_PAIRED = T_PAIRED  # в примере сравнения к подписи добавляется «· общая шкала»
-
 T_COMPARE_ROW = """        <tr>
           <td>{name}</td>
           <td class="num">{prev}</td>
@@ -106,6 +92,16 @@ T_AI_CARD = """    <article class="ai-card">
 T_FOOD_ROW = """      <div class="food-row">
         <span>{name}</span>
         <b>{value}<br><small>{share}</small></b>
+      </div>"""
+
+T_BUCKET_ROW = """      <div class="food-row">
+        <span>{name}</span>
+        <b>{value}</b>
+      </div>"""
+
+T_SEASONAL_ROW = """      <div class="food-row">
+        <span>{name}</span>
+        <b class="season-mark"><span class="{cls}">{mark}</span><br><small>{note}</small></b>
       </div>"""
 
 T_CATEGORY_VISUAL = """    <div class="category-visual">
@@ -160,11 +156,6 @@ T_STORE_ROW = """          <tr>
             </td>
           </tr>"""
 
-T_STORES_HIGHLIGHT = """    <div class="food-row">
-      <span>{name}</span>
-      <b>{value}</b>
-    </div>"""
-
 T_ITEM_ROW = """          <tr>
             <td>{name}</td>
             <td class="num">{receipts}</td>
@@ -172,9 +163,42 @@ T_ITEM_ROW = """          <tr>
             <td class="num">{total}</td>
           </tr>"""
 
+T_OTHER_ROW = """          <tr>
+            <td>{name}</td>
+            <td class="num">{qty}</td>
+            <td class="num">{total}</td>
+            <td class="num">{share}</td>
+          </tr>"""
+
+T_BASKET_ROW = """          <tr>
+            <td>{name}</td>
+            <td>{bucket}</td>
+            <td class="num">{qty}</td>
+            <td class="num">{total}</td>
+            <td class="num">{shelf}</td>
+            <td class="num">{season}</td>
+          </tr>"""
+
+T_WEEK_BAR = """        <g>
+          <rect class="{bar_class}" x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" height="{height:.1f}"></rect>
+          <text x="{cx:.1f}" y="{value_y:.1f}" text-anchor="middle" fill="#3f3b50" font-size="12">{value}</text>
+          <text x="{cx:.1f}" y="290" text-anchor="middle" fill="#666174" font-size="12">{label}</text>
+        </g>"""
+
 T_ACTION_STEP = """      <li><strong>{head}</strong> {body}</li>"""
 
 T_METHOD_RULE = """        <li>{rule}</li>"""
+
+T_SHOPPING_GROUP = """      <div class="shopping-group">
+        <h3>{title}</h3>
+        <ul>
+{items}
+        </ul>
+      </div>"""
+
+T_SHOPPING_ITEM = """          <li><strong>{name}</strong> — {note}</li>"""
+
+T_SHOPPING_TIP = """      <li>{tip}</li>"""
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +220,12 @@ def fmt_share(value: float, total: float) -> str:
     return f"{value / total * 100:.1f}%" if total else "0%"
 
 
-def pair_widths(previous: float, current: float) -> tuple[int, int]:
-    scale = max(abs(previous), abs(current), 1e-9)
-    return round(abs(previous) / scale * 100), round(abs(current) / scale * 100)
+def compact_money(value: float, currency: str) -> str:
+    """Короткая сумма для подписей над столбиками: 12,5 тыс. ₽ / 980 ₽."""
+    symbol = base.CURRENCY_SYMBOLS.get(currency, currency)
+    if abs(value) >= 1000:
+        return f"{value / 1000:.1f}".replace(".", ",") + f" тыс. {symbol}"
+    return f"{value:.0f} {symbol}"
 
 
 def nice_axis_max(value: float) -> float:
@@ -237,6 +264,36 @@ def polyline(series: list[float], axis_max: float) -> str:
         points.append(f"{x:.1f},{y:.1f}")
 
     return " ".join(points)
+
+
+def weekly_series(
+    report: base.PeriodReport,
+    currency: str,
+    end: datetime,
+    weeks: int = WEEKS_ON_CHART,
+) -> list[tuple[datetime, float, bool]]:
+    """Чистые расходы по неделям: [(конец недели, сумма, текущая?)] слева направо.
+
+    Недели отсчитываются от конца периода назад по 7 дней; последняя может
+    быть короче семи дней — это текущая неделя.
+    """
+    per_day: dict[str, float] = defaultdict(float)
+    for (item_currency, day), stats in report.days_total.items():
+        if item_currency == currency:
+            per_day[day] += stats.total
+
+    rows = []
+    for index in range(weeks - 1, -1, -1):
+        week_end = end - timedelta(days=7 * index)
+        week_start = week_end - timedelta(days=7)
+        total = 0.0
+        day = week_start + timedelta(days=1)
+        while day <= week_end:
+            total += per_day.get(day.strftime("%Y-%m-%d"), 0.0)
+            day += timedelta(days=1)
+        rows.append((week_end, total, index == 0))
+
+    return rows
 
 
 def signed_geometry(rows: list[tuple[str, float, float]]) -> tuple[float, object]:
@@ -361,18 +418,38 @@ def collect(
     other_total = sum(total for _, _, total in other_rows)
 
     # Корзина продуктов на неделю: отдельное окно, частота — по срокам
-    # годности. Считается по основной валюте отчёта.
+    # годности, объём — с сезонной поправкой по месяцу конца периода.
     basket: dict[str, list[base.BasketEntry]] = {}
     basket_weekly_total = 0.0
+    bucket_totals: dict[str, float] = {}
     basket_days = getattr(args, "basket_days", 180)
+    month = end.month
+    seasonal_rows = [
+        (label, weight)
+        for label, weight in base.seasonal_month_overrides(month)
+        if abs(weight - 1.0) > 1e-9
+    ]
     if basket_days >= 7:
         basket_report = base.build_period_report(
             conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
         )
-        baskets = base.build_weekly_basket(basket_report, basket_days, args.top)
+        baskets = base.build_weekly_basket(basket_report, basket_days, args.top, month=month)
         for bucket, entries in (baskets.get(currency) or {}).items():
-            basket[bucket] = entries
-            basket_weekly_total += sum(entry.weekly_sum for entry in entries)
+            entries = [entry for entry in entries if not hidden_item(entry.name)]
+            if entries:
+                basket[bucket] = entries
+                bucket_totals[bucket] = sum(entry.adjusted_sum for entry in entries)
+        basket_weekly_total = sum(bucket_totals.values())
+
+    # Недельный ритм для части «Графики»: окно всегда покрывает все столбики.
+    weeks_report = base.build_period_report(
+        conn,
+        end - timedelta(days=7 * WEEKS_ON_CHART),
+        end,
+        store_rules,
+        receipt_rules,
+    )
+    weeks = weekly_series(weeks_report, currency, end)
 
     return {
         "end": end,
@@ -397,8 +474,12 @@ def collect(
         "other_rest_total": sum(total for _, _, total in other_rows[args.top :]),
         "other_total": other_total,
         "basket": basket,
+        "bucket_totals": bucket_totals,
         "basket_days": basket_days,
         "basket_weekly_total": basket_weekly_total,
+        "month": month,
+        "seasonal_rows": seasonal_rows,
+        "weeks": weeks,
         "current_report": current,
         "previous_report": previous,
         "last_receipt": base.latest_receipt_datetime(conn),
@@ -495,7 +576,141 @@ def build_ai_json_prompt(
 """.strip()
 
 
-def request_ai(prompt: str, command: str, timeout: int) -> tuple[dict | None, str | None]:
+# ---------------------------------------------------------------------------
+# AI-выводы: план закупки на неделю
+# ---------------------------------------------------------------------------
+
+def shopping_family_intro(family_context: str) -> str:
+    """Вводная про семью для промпта закупки: FAMILY.md или фолбэк."""
+    if family_context:
+        return (
+            "Ты помощник по закупкам продуктов домашнего хозяйства.\n"
+            "Контекст семьи (из локального файла пользователя FAMILY.md):\n"
+            + family_context
+        )
+
+    return "Ты помощник по закупкам продуктов семьи из 2 взрослых и 2 подростков (питаются дома)."
+
+
+def build_shopping_prompt(
+    data: dict,
+    max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+    family_context: str = "",
+) -> str:
+    currency = data["currency"]
+    month_name = MONTHS_RU[data["month"]].lower()
+
+    def short_item(name: str) -> str:
+        return base.truncate_cell(name, max_item_name_chars)
+
+    seasonal_lines = [
+        f"- {label}: ×{weight:g} ({'ниже' if weight < 1 else 'выше'} обычного спроса)"
+        for label, weight in data["seasonal_rows"]
+    ]
+
+    item_lines = []
+    for bucket in base.BUCKET_ORDER:
+        for entry in data["basket"].get(bucket, []):
+            item_lines.append(
+                f"- {short_item(entry.name)} · {bucket} · {entry.adjusted_qty:.4g}/нед · "
+                f"{base.money(entry.adjusted_sum, currency)}/нед · срок ~{entry.shelf_days} дн · "
+                f"сезон {base.seasonal_mark(entry.season_weight)}"
+            )
+
+    seasonal_block = "\n".join(seasonal_lines) or "- сдвигов нет"
+    items_block = "\n".join(item_lines) or "- корзина пуста: регулярных покупок мало"
+
+    return f"""
+{shopping_family_intro(family_context)}
+Составь план закупки еды на следующую неделю по корзине регулярных покупок,
+построенной по чекам. Используй ТОЛЬКО товары из списка: объединяй и
+группируй их, новые продукты не придумывай.
+
+Сезонность уже применена к количествам: сейчас {month_name}, множители в списке.
+Позиции со множителем меньше 1 берутся реже, больше 1 — чаще.
+
+Ответь СТРОГО одним валидным JSON-объектом без markdown-разметки по схеме:
+{{
+  "lead": "главный принцип закупки на этой неделе, 1-2 предложения (до 240 символов)",
+  "groups": [
+    {{"title": "Купить на неделю (скоропортящееся)", "items": [
+      {{"name": "товар из списка", "note": "сколько и почему, коротко"}}
+    ]}}
+  ],
+  "tips": ["1-3 совета по закупке и хранению"]
+}}
+Групп 3-4 с ролями: на неделю (срок до 7 дней), раз в 2-4 недели, запас впрок,
+вне сезона (взять меньше или пропустить). В каждой группе 3-6 товаров.
+Пиши по-русски, без markdown внутри строк.
+
+Валюта: {currency}
+Ориентир трат на неделю по корзине: {base.money(data['basket_weekly_total'], currency)}
+
+Сезонные группы месяца:
+{seasonal_block}
+
+Корзина регулярных покупок (количество и сумма уже с сезонной поправкой):
+{items_block}
+""".strip()
+
+
+def fallback_shopping_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS) -> dict:
+    """Детерминированный план закупки: группы по бакетам сроков годности."""
+    currency = data["currency"]
+
+    def short_item(name: str) -> str:
+        return base.truncate_cell(name, max_item_name_chars)
+
+    groups = []
+    off_season = []
+    for bucket in base.BUCKET_ORDER:
+        entries = data["basket"].get(bucket, [])
+        if not entries:
+            continue
+
+        items = []
+        for entry in entries[:5]:
+            note = f"~{entry.adjusted_qty:.4g}/нед ≈ {base.money(entry.adjusted_sum, currency)}, срок ~{entry.shelf_days} дн."
+            if abs(entry.season_weight - 1.0) > 1e-9:
+                note += f" Сезон {base.seasonal_mark(entry.season_weight)}."
+                if entry.season_weight < 0.8:
+                    off_season.append((entry, base.seasonal_mark(entry.season_weight)))
+            items.append({"name": short_item(entry.name), "note": note})
+        groups.append({"title": bucket, "items": items})
+
+    if off_season:
+        groups.append({
+            "title": "Вне сезона — взять меньше или пропустить",
+            "items": [
+                {"name": short_item(entry.name), "note": f"сезонный множитель {mark}: спрос ниже обычного"}
+                for entry, mark in off_season[:4]
+            ],
+        })
+
+    if not groups:
+        groups.append({
+            "title": "Корзина пуста",
+            "items": [{"name": "Нет регулярных покупок", "note": "накопите историю чеков и пересоберите отчёт"}],
+        })
+
+    lead = (
+        f"Ориентир недели — {base.money(data['basket_weekly_total'], currency)} по регулярной корзине "
+        f"за {data['basket_days']} дней; частота закупок — по срокам годности, объём — с сезонной поправкой."
+    )
+    tips = [
+        "Скоропортящееся (срок до 7 дней) берите небольшими партиями — ровно на неделю.",
+        "Хранение дольше месяца выгоднее закупать раз в 2-4 недели, по акциям.",
+    ]
+
+    return {"lead": lead, "groups": groups, "tips": tips}
+
+
+def request_ai(
+    prompt: str,
+    command: str,
+    timeout: int,
+    required: tuple[str, ...] = ("lead", "cards"),
+) -> tuple[dict | None, str | None]:
     argv = split_command(command)
     if argv is None:
         return None, f"пустая команда AI CLI: {command!r}"
@@ -530,8 +745,13 @@ def request_ai(prompt: str, command: str, timeout: int) -> tuple[dict | None, st
     except json.JSONDecodeError as error:
         return None, f"AI CLI вернул невалидный JSON: {error}"
 
-    if not isinstance(payload.get("lead"), str) or not isinstance(payload.get("cards"), list) or not payload["cards"]:
-        return None, "JSON AI CLI без lead/cards"
+    missing = [
+        key
+        for key in required
+        if not isinstance(payload.get(key), (str, list)) or not payload.get(key)
+    ]
+    if missing:
+        return None, f"JSON AI CLI без {', '.join(missing)}"
 
     return payload, None
 
@@ -624,6 +844,7 @@ def fallback_ai(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_
 def build_render(
     data: dict,
     ai: dict,
+    shopping_ai: dict,
     max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
 ) -> tuple[dict[str, object], dict[str, str]]:
     currency = data["currency"]
@@ -632,6 +853,7 @@ def build_render(
     previous_stats = data["previous_stats"]
     days = data["days"]
     end, start = data["end"], data["start"]
+    month_name = MONTHS_RU[data["month"]].lower()
 
     def short_item(name: str) -> str:
         return base.truncate_cell(name, max_item_name_chars)
@@ -679,11 +901,23 @@ def build_render(
             if data.get("as_of_auto")
             else f"конец периода зафиксирован аргументом --as-of ({end:%d.%m.%Y %H:%M})"
         ),
+        # Части-подотчёты
+        "part_analysis_title": "Анализ месяца",
+        "part_analysis_note": (
+            "AI-интерпретация месяца, следующие действия, сравнение периодов, "
+            "структура расходов по категориям, магазины и повторные покупки."
+        ),
+        "part_charts_title": "Графики",
+        "part_charts_note": (
+            "Динамика расходов: накопленные суммы двух равных периодов "
+            f"и недельный ритм покупок за последние {WEEKS_ON_CHART} недель."
+        ),
+        "part_shopping_title": "Закупка на неделю",
+        "part_shopping_note": (
+            f"Регулярная продуктовая корзина ({month_name}): частота закупок — по срокам "
+            "годности, объём — с сезонной поправкой; AI собирает из этого план закупки."
+        ),
         # Сравнение
-        "period_previous_total": base.money(previous_stats.total, currency),
-        "period_previous_note": f"{fmt_int(previous_stats.count)} чеков · {base.money(previous_avg_day, currency)} в день",
-        "period_current_total": base.money(stats.total, currency),
-        "period_current_note": f"{fmt_int(stats.count)} чеков · {base.money(avg_day, currency)} в день",
         "change_banner_text": f"Чистые расходы за {days} дней: было → стало",
         "change_banner_value": fmt_delta(stats.total, previous_stats.total, currency),
         # AI-секция
@@ -693,7 +927,6 @@ def build_render(
         "ai_footer_note": "Выводы построены только по агрегатам чеков; доходы и цели не оцениваются.",
         # Структура
         "structure_note": "Категории — по товарным позициям чеков",
-        "categories_panel_footnote": "Топ-категории, парные полосы в одной шкале на категорию",
         "second_panel_title": "Топ позиций в чеках",
         "category_list_title": "Все категории: было → стало",
         "category_list_intro": "Полоса «Раньше» и «Сейчас» в общей шкале; отрицательные значения — левее нулевой линии.",
@@ -701,8 +934,8 @@ def build_render(
         # Разбор Прочего
         "other_breakdown_title": "Что осталось в Прочем",
         "other_breakdown_note": (
-            f"{base.money(stats.total, currency)} чистых расходов; "
-            f"Прочее — {base.money(data['other_total'], currency)}"
+            f"Прочее — {base.money(data['other_total'], currency)} из "
+            f"{base.money(stats.total, currency)} чистых расходов"
         ),
         "other_breakdown_footnote": (
             f"Позиции, не распознанные категориями; "
@@ -714,29 +947,57 @@ def build_render(
         "category_total_current_label": "Текущий период:",
         "category_total_diff_label": "Изменение:",
         "details_summary": "Полные списки категорий обоих периодов",
-        # График
+        # График накопленных расходов
         "daily_note": "Накопленные чистые расходы по дням",
         "chart_title": f"Накопленные расходы, {days} дней",
         "chart_desc": f"Кумулятивные чистые расходы за последние и предыдущие {days} дней",
         "chart_footnote": "Возвраты вычитаются в день чека; дни без покупок продолжают накопленную сумму.",
         "x_first_label": "День 1",
         "x_last_label": f"День {days}",
+        # Недельный график
+        "weekly_title": "Расходы по неделям",
+        "weekly_note": f"чистые расходы за последние {WEEKS_ON_CHART} недель",
+        "weekly_chart_title": f"Чистые расходы по неделям, {WEEKS_ON_CHART} недель",
+        "weekly_chart_desc": "По одному столбику на неделю; последний — текущая, возможно неполная неделя",
+        "weekly_footnote": (
+            "Последний столбик — текущая неделя (может быть короче семи дней), "
+            "остальные — полные недели. Суммы — чистые, с учётом возвратов."
+        ),
         # Магазины
         "stores_note": f"Топ-{data['top']} магазинов по чистым расходам",
         "mini_legend_note": "полосы — доли от максимума колонки «Сейчас»",
-        "stores_highlight_title": "Главные изменения по магазинам",
         # Привычки
         "habits_note": "Позиции, встретившиеся более чем в одном чеке",
-        # Корзина на неделю
-        "basket_title": "Корзина продуктов на неделю",
-        "basket_note": (
+        # Закупка на неделю
+        "shopping_title": "Что купить на неделе",
+        "shopping_note": (
             f"регулярные покупки за {data['basket_days']} дней; "
-            f"ориентир трат: {base.money(data['basket_weekly_total'], currency)}/нед"
+            f"ориентир: {base.money(data['basket_weekly_total'], currency)}/нед"
         ),
+        "shopping_budget_title": "Ориентир недели",
+        "shopping_budget_value": f"{base.money(data['basket_weekly_total'], currency)} / нед",
+        "shopping_budget_footnote": (
+            f"Средний недельный расход по регулярной корзине за {data['basket_days']} дней "
+            "с сезонной поправкой текущего месяца."
+        ),
+        "seasonal_title": f"Сезон сейчас: {month_name}",
+        "seasonal_footnote": (
+            "Множители — типичные сезонные сдвиги спроса (×1 — не влияет); применены "
+            "к количеству и сумме позиций корзины. Список общий для месяца, даже если "
+            "позиции пока нет в корзине."
+        ),
+        "basket_title": "Корзина продуктов на неделю",
         "basket_footer": (
-            "Количество — средний расход в неделю за окно корзины; частота закупок — "
-            "по типовому сроку годности: скоропортящееся каждую неделю, "
+            "Количество и сумма — средний расход в неделю за окно корзины с сезонной поправкой; "
+            "частота закупок — по типовому сроку годности: скоропортящееся каждую неделю, "
             "длительного хранения — раз в 2-4 недели или запасом."
+        ),
+        "shopping_ai_title": "План закупки",
+        "shopping_ai_lead": shopping_ai.get("lead", ""),
+        "shopping_ai_source": f"источник: {data.get('shopping_ai_source', 'Codex CLI')}",
+        "shopping_ai_footer": (
+            "План построен только по корзине регулярных покупок из чеков; "
+            "домашние запасы и свежесть проверяйте перед походом в магазин."
         ),
         # Действия
         "actions_title": "Что сделать в следующем месяце",
@@ -753,7 +1014,7 @@ def build_render(
         "method_details_summary": "Правила расчёта",
         # Подвал
         "footer_note": (
-            "Отчёт сформирован LedgerFox из локальной базы чеков ФНС; AI-выводы — "
+            "Отчёт сформирован LedgerFox из локальной базы чеков ФНС; AI-выводы и план закупки — "
             f"{data.get('ai_source', 'Codex CLI')}. Файл месяца обновляется повторным запуском make ai-report."
         ),
     }
@@ -807,22 +1068,8 @@ def build_render(
     def fmt_value(value: float, kind: str) -> str:
         return fmt_int(int(value)) if kind == "count" else base.money(value, currency)
 
-    paired_rows = []
     table_rows = []
     for name, previous, current, kind in compare_metrics:
-        if kind != "count":
-            prev_pct, cur_pct = pair_widths(previous, current)
-            paired_rows.append(
-                T_PAIRED.format(
-                    label=f"{name} · общая шкала",
-                    diff=fmt_delta(current, previous, currency),
-                    prev=fmt_value(previous, kind),
-                    cur=fmt_value(current, kind),
-                    prev_pct=prev_pct,
-                    cur_pct=cur_pct,
-                )
-            )
-
         diff_class = "increase" if current > previous else ("decrease" if current < previous else "")
         table_rows.append(
             T_COMPARE_ROW.format(
@@ -833,8 +1080,6 @@ def build_render(
                 diff=fmt_delta(current, previous, currency),
             )
         )
-
-    blocks["compare-paired"] = "\n".join(paired_rows)
     blocks["compare-row"] = "\n".join(table_rows)
 
     cards = []
@@ -844,19 +1089,6 @@ def build_render(
         )
         cards.append(T_AI_CARD.format(index=f"{index:02d}", theme=theme, title=title, body=body))
     blocks["ai-cards"] = "\n".join(cards)
-
-    blocks["category-paired"] = "\n".join(
-        T_PAIRED.format(
-            label=name,
-            diff=fmt_delta(current, previous, currency),
-            prev=base.money(previous, currency),
-            cur=base.money(current, currency),
-            prev_pct=prev_pct,
-            cur_pct=cur_pct,
-        )
-        for name, current, previous in data["category_rows"][:5]
-        for prev_pct, cur_pct in (pair_widths(previous, current),)
-    )
 
     blocks["food-row"] = "\n".join(
         T_FOOD_ROW.format(
@@ -919,19 +1151,6 @@ def build_render(
         name="нет данных", cur="—", prev="—", diff_class="", diff="—", share="—", prev_pct=0, cur_pct=0
     )
 
-    store_changes = sorted(
-        (
-            (name, data["current_stores"].get(name, 0.0) - data["previous_stores"].get(name, 0.0))
-            for name in set(data["current_stores"]) | set(data["previous_stores"])
-        ),
-        key=lambda row: abs(row[1]),
-        reverse=True,
-    )[:3]
-    blocks["stores-highlight"] = "\n".join(
-        T_STORES_HIGHLIGHT.format(name=name, value=f"{diff:+,.0f}".replace(",", " ") + f" {symbol}")
-        for name, diff in store_changes
-    ) or T_STORES_HIGHLIGHT.format(name="Изменений нет", value=f"0 {symbol}")
-
     blocks["item-row"] = "\n".join(
         T_ITEM_ROW.format(
             name=short_item(name),
@@ -975,13 +1194,6 @@ def build_render(
         share="—",
     )
 
-    T_BASKET_ROW = """          <tr>
-            <td>{name}</td>
-            <td>{bucket}</td>
-            <td class="num">{qty}</td>
-            <td class="num">{total}</td>
-            <td class="num">{shelf}</td>
-          </tr>"""
     basket_rows = []
     for bucket in base.BUCKET_ORDER:
         for entry in data["basket"].get(bucket, []):
@@ -989,9 +1201,10 @@ def build_render(
                 T_BASKET_ROW.format(
                     name=short_item(entry.name),
                     bucket=bucket,
-                    qty=f"{entry.weekly_qty:.4g}",
-                    total=base.money(entry.weekly_sum, currency),
+                    qty=f"{entry.adjusted_qty:.4g}",
+                    total=base.money(entry.adjusted_sum, currency),
                     shelf=f"~{entry.shelf_days} дн.",
+                    season=base.seasonal_mark(entry.season_weight),
                 )
             )
     blocks["basket-row"] = "\n".join(basket_rows) or T_BASKET_ROW.format(
@@ -1000,6 +1213,85 @@ def build_render(
         qty="—",
         total=base.money(0, currency),
         shelf="—",
+        season="—",
+    )
+
+    # Часть «Закупка»: ориентир по бакетам и сезонные группы месяца
+    blocks["basket-bucket-row"] = "\n".join(
+        T_BUCKET_ROW.format(
+            name=bucket,
+            value=base.money(data["bucket_totals"].get(bucket, 0.0), currency),
+        )
+        for bucket in base.BUCKET_ORDER
+        if bucket in data["bucket_totals"]
+    ) or T_BUCKET_ROW.format(name="регулярных покупок не найдено", value=base.money(0, currency))
+
+    seasonal_rows = []
+    for label, weight in data["seasonal_rows"]:
+        seasonal_rows.append(
+            T_SEASONAL_ROW.format(
+                name=label,
+                cls="s-down" if weight < 1 else "s-up",
+                mark=base.seasonal_mark(weight),
+                note="ниже обычного спроса" if weight < 1 else "выше обычного спроса",
+            )
+        )
+    blocks["seasonal-row"] = "\n".join(seasonal_rows) or T_SEASONAL_ROW.format(
+        name="сезонных сдвигов в этом месяце нет", cls="s-flat", mark="×1", note="все группы нейтральны"
+    )
+
+    # График по неделям: столбики в общей шкале, текущая неделя подсвечена
+    weeks = data["weeks"]
+    week_axis_max = nice_axis_max(max([total for _, total, _ in weeks] + [0.0]))
+    scalars["week_axis_max_label"] = base.money(week_axis_max, currency)
+    scalars["week_axis_mid_label"] = base.money(week_axis_max / 2, currency)
+    slot = (962 - 75) / len(weeks)
+    bar_width = slot * 0.62
+    week_bars = []
+    for index, (week_end, total, is_current) in enumerate(weeks):
+        height = min(total / week_axis_max, 1.0) * (270 - 35)
+        x = 75 + slot * index + (slot - bar_width) / 2
+        cx = x + bar_width / 2
+        # Нулевые недели остаются без подписи суммы: пустых «0 ₽» по оси не нужно.
+        value = compact_money(total, currency) if total > 0 else ""
+        week_bars.append(
+            T_WEEK_BAR.format(
+                bar_class="week-bar-cur" if is_current else "week-bar-prev",
+                x=x,
+                y=270 - height,
+                width=bar_width,
+                height=height,
+                cx=cx,
+                value_y=270 - height - 8,
+                value=value,
+                label=f"{week_end:%d.%m}",
+            )
+        )
+    blocks["week-bar"] = "\n".join(week_bars)
+
+    # AI-план закупки: группы и советы
+    shopping_groups = []
+    for group in shopping_ai.get("groups", [])[:6]:
+        if isinstance(group, (list, tuple)):
+            title, items = group[0], group[1]
+        else:
+            title, items = group.get("title", ""), group.get("items", [])
+        rendered_items = []
+        for item in items[:8]:
+            if isinstance(item, (list, tuple)):
+                name, note = item[0], item[1]
+            else:
+                name, note = item.get("name", ""), item.get("note", "")
+            rendered_items.append(T_SHOPPING_ITEM.format(name=name, note=note))
+        if rendered_items:
+            shopping_groups.append(T_SHOPPING_GROUP.format(title=title, items="\n".join(rendered_items)))
+    blocks["shopping-group"] = "\n".join(shopping_groups) or T_SHOPPING_GROUP.format(
+        title="План пуст",
+        items=T_SHOPPING_ITEM.format(name="нет данных", note="накопите историю чеков"),
+    )
+    blocks["shopping-tip"] = "\n".join(
+        T_SHOPPING_TIP.format(tip=tip if isinstance(tip, str) else str(tip))
+        for tip in shopping_ai.get("tips", [])[:5]
     )
 
     steps = []
@@ -1019,6 +1311,8 @@ def build_render(
             "Категории назначаются по подстроке в названии товара (первое совпадение), без совпадения — «Прочее».",
             "Валюты не складываются: RUB и KZT считаются раздельно, отчёт строится по основной валюте периода.",
             "Товарные суммы и количества берутся со знаком операции; товарная разбивка может расходиться с итогом чеков.",
+            "Корзина на неделю — регулярные продуктовые покупки (3+ чеков за окно); частота закупок — по типовому сроку годности.",
+            "Сезонная поправка — множитель спроса по месяцу (мороженое и прохладительные напитки зимой ниже, ягоды летом выше); множитель применён к количеству и сумме позиций корзины.",
         )
     )
 
@@ -1043,7 +1337,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, type=Path, help="Каталог отчётов (по умолчанию reports)")
     parser.add_argument("--currency", default="auto", help="RUB/KZT или auto — основная валюта периода")
-    parser.add_argument("--no-ai", action="store_true", help="Не вызывать AI CLI: карточки из данных")
+    parser.add_argument("--no-ai", action="store_true", help="Не вызывать AI CLI: карточки и план закупки из данных")
     parser.add_argument("--ai-command", default=None, help="Команда AI CLI с аргументами (промпт — на stdin); по умолчанию ai.command из config.json, иначе codex")
     parser.add_argument("--ai-timeout", default=180, type=int, help="Таймаут AI CLI, секунды")
     parser.add_argument("--config", default="config.json", type=Path, help="config.json с настройками отчётов (ai.command)")
@@ -1093,7 +1387,7 @@ def main(argv: list[str] | None = None) -> int:
                 data, max_item_name_chars, family_context=_config.load_family_context()
             ),
             ai_command,
-            args.ai_timeout
+            args.ai_timeout,
         )
         if ai_error:
             print(f"AI недоступен ({ai_error}); карточки построены из данных", file=sys.stderr)
@@ -1105,7 +1399,28 @@ def main(argv: list[str] | None = None) -> int:
         agent = (split_command(ai_command) or [ai_command])[0]
         data["ai_source"] = f"AI CLI ({agent})"
 
-    scalars, blocks = build_render(data, ai_payload, max_item_name_chars)
+    # AI-вызов 2: план закупки на неделю (lead + groups + tips)
+    shopping_payload, shopping_error = (None, None)
+    if not args.no_ai:
+        shopping_payload, shopping_error = request_ai(
+            build_shopping_prompt(
+                data, max_item_name_chars, family_context=_config.load_family_context()
+            ),
+            ai_command,
+            args.ai_timeout,
+            required=("lead", "groups"),
+        )
+        if shopping_error:
+            print(f"AI для закупки недоступен ({shopping_error}); план построен из данных", file=sys.stderr)
+
+    if shopping_payload is None:
+        shopping_payload = fallback_shopping_ai(data, max_item_name_chars)
+        data["shopping_ai_source"] = "детерминированный план по корзине"
+    else:
+        agent = (split_command(ai_command) or [ai_command])[0]
+        data["shopping_ai_source"] = f"AI CLI ({agent})"
+
+    scalars, blocks = build_render(data, ai_payload, shopping_payload, max_item_name_chars)
 
     try:
         rendered = apply_blocks(template, blocks)
