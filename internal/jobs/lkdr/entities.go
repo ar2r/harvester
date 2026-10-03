@@ -1,7 +1,7 @@
 package lkdr
 
 import (
-	. "github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
+	. "github.com/ar2r/ledger-fox/internal/jobs/lkdr/internal/entities"
 )
 
 var entities = []any{

@@ -10,7 +10,7 @@ import (
 	"github.com/jfk9w-go/based"
 	"github.com/jfk9w-go/confi"
 
-	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/ledger-fox/internal/database"
 )
 
 // Схема конфига генерируется на каждом старте приложения; doc-теги парсятся

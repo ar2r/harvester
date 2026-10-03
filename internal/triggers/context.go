@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/ledger-fox/internal/jobs"
 )
 
 type loggerKey struct{}

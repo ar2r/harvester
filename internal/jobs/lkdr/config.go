@@ -3,7 +3,7 @@ package lkdr
 import (
 	"time"
 
-	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/ledger-fox/internal/database"
 )
 
 type Credential struct {

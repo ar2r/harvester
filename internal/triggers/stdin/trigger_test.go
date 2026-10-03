@@ -14,8 +14,8 @@ import (
 
 	"github.com/jfk9w-go/based"
 
-	"github.com/ar2r/harvester/internal/jobs"
-	"github.com/ar2r/harvester/internal/triggers"
+	"github.com/ar2r/ledger-fox/internal/jobs"
+	"github.com/ar2r/ledger-fox/internal/triggers"
 )
 
 type fakeRun struct {

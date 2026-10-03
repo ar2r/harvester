@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ar2r/harvester/internal/common"
+	"github.com/ar2r/ledger-fox/internal/common"
 )
 
 const All = "all"

@@ -6,8 +6,8 @@ import (
 
 	"github.com/jfk9w-go/lkdr-api"
 
-	"github.com/ar2r/harvester/internal/captcha"
-	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/ledger-fox/internal/captcha"
+	"github.com/ar2r/ledger-fox/internal/jobs"
 )
 
 type authorizer struct {

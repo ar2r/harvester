@@ -1,4 +1,4 @@
-module github.com/ar2r/harvester
+module github.com/ar2r/ledger-fox
 
 go 1.26.0
 

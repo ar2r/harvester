@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm/logger"
 
-	"github.com/ar2r/harvester/internal/logs"
+	"github.com/ar2r/ledger-fox/internal/logs"
 )
 
 type slogLogger struct {
