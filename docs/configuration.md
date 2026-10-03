@@ -11,10 +11,10 @@
 ## Формат вывода
 
 По умолчанию — текстовый режим для человека: логи в `stderr` с коротким временем,
-результаты задач в консоль (` ✔ a/lkdr` / ` ✘ a/lkdr: …`).
+результаты задач в консоль (` ✔ default/lkdr` / ` ✘ default/lkdr: …`).
 
 - `--json` (корневой ключ `json`) — весь вывод построчным JSON: логи в `stderr`,
-  события триггера (`{"event":"job","status":"ok","user":"a","job":"lkdr"}`) в
+  события триггера (`{"event":"job","status":"ok","user":"default","job":"lkdr"}`) в
   `stdout`. Принудительно включает `log.encoding=json`.
 - `--debug` (ключ `debug`) — уровень логирования `DEBUG` вместо `INFO`: детальные
   записи о записи в БД и объёмах обработанных данных. Переопределяет `log.level`.
@@ -30,7 +30,7 @@
     "enabled": true,
     "database": { "dsn": "lkdr.db" },
     "users": {
-      "a": [{ "phone": "79001234567" }]
+      "default": [{ "phone": "79001234567" }]
     }
   }
 }
@@ -83,7 +83,7 @@
 
 ```json
 "users": {
-  "a": [{ "phone": "79001234567", "firstSyncMonths": 36 }]
+  "default": [{ "phone": "79001234567", "firstSyncMonths": 36 }]
 }
 ```
 
