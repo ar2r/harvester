@@ -11,7 +11,7 @@ CONFIG_FILE ?= ./config.json
 REPORT_ARGS ?=
 AI_REPORT_ARGS ?=
 
-.PHONY: test bin build run parse report report-all ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
+.PHONY: test bin build run parse report report-all ai-report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file fox
 
 test:
 	go test -v ./...
@@ -54,3 +54,11 @@ lkdr-report-ai:
 
 lkdr-report-file:
 	./scripts/reports/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color never $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS) > $(LKDR_REPORT_OUT)
+
+# 🦊 пасхалка
+fox:
+	@echo '     /\     /\     '
+	@echo '    /  \___/  \    '
+	@echo '   |  -     -  |   LedgerFox'
+	@echo '    \    v    /    ваши чеки — у вас'
+	@echo '     \_______/     SQLite · AI-отчёты · без облака'

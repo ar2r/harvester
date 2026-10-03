@@ -151,4 +151,7 @@
 
   <line x1="520" y1="680" x2="560" y2="680" stroke="#868E96" stroke-width="2.5" stroke-dasharray="6 4"/>
   <text x="568" y="684" font-size="10.5" fill="#495057">ручной запуск пользователем</text>
+
+  <!-- пасхалка: приглядитесь к правому нижнему углу -->
+  <text x="975" y="703" text-anchor="end" font-size="15" opacity="0.22">🦊</text>
 </svg>
