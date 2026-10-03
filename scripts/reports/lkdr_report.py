@@ -55,6 +55,16 @@ class Color:
 
 COLOR = Color(False)
 
+# Режим markdown (--format md): заголовки ##/### и GFM-таблицы вместо
+# ASCII-рамок — для вывода отчёта прямо в чат AI-агента. Переключается
+# в run_report; цвет при этом принудительно выключен.
+FORMAT_STATE = {"md": False, "first_header": True}
+
+
+def md_cell(value: object) -> str:
+    """Ячейка для markdown-таблицы: без ANSI, экранированные пайпы."""
+    return ANSI_RE.sub("", str(value)).replace("|", "\\|").replace("\n", " ")
+
 
 @dataclass
 class MutableStats:
@@ -419,6 +429,14 @@ def print_table(headers: tuple[str, ...], rows: Iterable[tuple[object, ...]]) ->
         print(COLOR.muted("(нет данных)"))
         return
 
+    if FORMAT_STATE["md"]:
+        print("| " + " | ".join(md_cell(header) for header in headers) + " |")
+        print("|" + "---|" * len(headers))
+        for row in rows:
+            print("| " + " | ".join(md_cell(cell) for cell in row) + " |")
+        print()
+        return
+
     widths = [visible_len(header) for header in headers]
     for row in rows:
         widths = [max(width, visible_len(cell)) for width, cell in zip(widths, row)]
@@ -578,6 +596,14 @@ def category_totals(item_totals: Mapping[str, float]) -> defaultdict[str, float]
 
 
 def print_header(title: str) -> None:
+    if FORMAT_STATE["md"]:
+        if FORMAT_STATE["first_header"]:
+            print(f"## {title}")
+            FORMAT_STATE["first_header"] = False
+        else:
+            print(f"### {title}")
+        return
+
     print(COLOR.header(title))
     print(COLOR.muted("-" * visible_len(title)))
 
@@ -919,12 +945,17 @@ def run_report(
     ai_timeout: int,
     max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
     private_categories: list[str] | None = None,
+    report_format: str = "text",
 ) -> None:
     if days < 1:
         raise SystemExit("--days must be at least 1")
     if top < 1:
         raise SystemExit("--top must be at least 1")
+    FORMAT_STATE["md"] = report_format == "md"
+    FORMAT_STATE["first_header"] = True
     COLOR.enabled = color == "always" or (color == "auto" and sys.stdout.isatty())
+    if FORMAT_STATE["md"]:
+        COLOR.enabled = False
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -1354,6 +1385,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--db", default=DEFAULT_DB, type=Path, help="Путь к lkdr.db")
     parser.add_argument(
+        "--format",
+        choices=("text", "md"),
+        default="text",
+        help="Формат вывода: text — терминал с рамками; md — markdown (GFM-таблицы, без цвета), например для чата AI-агента",
+    )
+    parser.add_argument(
         "--days",
         default=DEFAULT_DAYS,
         type=int,
@@ -1433,6 +1470,7 @@ def main() -> None:
         args.ai_timeout,
         max_item_name_chars,
         private_categories,
+        args.format,
     )
 
 

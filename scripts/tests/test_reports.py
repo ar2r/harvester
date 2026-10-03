@@ -593,6 +593,55 @@ class PrivateCategoriesTests(unittest.TestCase):
             self.assertIn("Аптека и здоровье", content)
 
 
+class MarkdownFormatTests(unittest.TestCase):
+    def test_md_format_for_chat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db), "--format", "md", "--color", "always",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("## Отчет по покупкам", proc.stdout)
+            self.assertIn("### Короткий вывод (рубли)", proc.stdout)
+            self.assertIn("| Показатель", proc.stdout)
+            self.assertIn("---|", proc.stdout)
+            # Цвет принудительно выключен, ASCII-рамок нет.
+            self.assertNotIn("\x1b[", proc.stdout)
+
+    def test_md_escapes_pipes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "insert into receipts values ('cp','79000000001',NULL,'INDIVIDUAL','2026-09-13 10:00:00','1','dcp','Магазин Д','7700000001','2026-09-13 10:00:00','123.0',NULL)"
+            )
+            connection.execute(
+                "insert into fiscal_data values ('cp','2026-09-13 10:00:00',123.0,1,0.0,'Магазин Д','г. Москва','Магазин Д','7700000001')"
+            )
+            connection.execute(
+                "insert into fiscal_data_items values ('cp',1,'Товар с | вертикальной чертой',10,4,61.5,1,NULL,2,123.0)"
+            )
+            connection.commit()
+            connection.close()
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db), "--format", "md",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("Товар с \\| вертикальной", proc.stdout)
+
+    def test_invalid_format_rejected(self):
+        proc = run_python(REPORTS_DIR / "lkdr_report.py", "--db", "x.db", "--format", "pdf")
+        self.assertNotEqual(proc.returncode, 0)
+
+
 class ExampleReportTests(unittest.TestCase):
     def run_example(self, *args: str) -> subprocess.CompletedProcess[str]:
         return run_python(REPORTS_DIR / "example.py", *args)

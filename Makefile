@@ -4,6 +4,7 @@ LKDR_TOP ?= 10
 LKDR_REPORT_OUT ?= lkdr-report.txt
 LKDR_CURRENCY_ARGS ?=
 LKDR_COLOR ?= auto
+LKDR_FORMAT ?= text
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
 CONFIG_FILE ?= ./config.json
@@ -43,7 +44,7 @@ clean:
 	rm -rf bin/*
 
 lkdr-report:
-	./scripts/reports/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color $(LKDR_COLOR) $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS)
+	./scripts/reports/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color $(LKDR_COLOR) --format $(LKDR_FORMAT) $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS)
 
 lkdr-report-short:
 	$(MAKE) lkdr-report LKDR_TOP=5

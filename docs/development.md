@@ -14,7 +14,7 @@
 | `make report` | Интерактивное меню Python-отчётов из `scripts/reports/`; аргументы пробрасываются выбранным скриптам: `make report REPORT_ARGS="--db my.db"`. |
 | `make report-all` | Всё сразу и без вопросов: обновляет HTML-отчёт месяца (`reports/lkdr-YYYY-MM.html`), затем печатает текстовый отчёт с AI-выводами и рекомендациями прямо в консоль. Те же переменные: `LKDR_DB`, `AI_REPORT_ARGS`, `LKDR_AI_ARGS`, `LKDR_DAYS`/`LKDR_TOP`. |
 | `make ai-report` | HTML-отчёт «Месяц в чеках» в `reports/lkdr-YYYY-MM.html` (месяц — из конца периода: свежий чек или `--as-of`; перезапуск обновляет файл того же месяца). AI-выводы через настраиваемый AI CLI — по умолчанию codex, агент задаётся `ai.command` в [конфигурации](configuration.md#ai); при недоступности — детерминированные из данных. Аргументы: `AI_REPORT_ARGS`, база — `LKDR_DB`. |
-| `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md). |
+| `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md); `LKDR_FORMAT=md` — markdown-версия для вывода в чат AI-агента. |
 | `scripts/dist.sh` | Релизные архивы в `bin/` для windows/linux/darwin × amd64/arm64 (матрица сужается `GOOSES=… GOARCHES=…`; кросс требует C-компилятор из-за SQLite/CGO). |
 
 Отдельный тест:
