@@ -801,6 +801,73 @@ class WeeklyBasketTests(unittest.TestCase):
             self.assertIn("~7 дн.", content)
 
 
+LONG_STORE_NAME = "Очень длинное название магазина для проверки обрезки в отчетах"
+
+
+def add_long_store(db: Path) -> None:
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "insert into receipts values ('cs','79000000001',NULL,'INDIVIDUAL','2026-09-12 12:00:00','1','dcs',?,'7700000001','2026-09-12 12:00:00','777.0',NULL)",
+        (LONG_STORE_NAME,),
+    )
+    connection.execute(
+        "insert into fiscal_data values ('cs','2026-09-12 12:00:00',777.0,1,0.0,?,'г. Москва',?,'7700000001')",
+        (LONG_STORE_NAME, LONG_STORE_NAME),
+    )
+    connection.execute(
+        "insert into fiscal_data_items values ('cs',1,'Молоко 3.2%',10,4,77.7,1,NULL,10,777.0)"
+    )
+    connection.commit()
+    connection.close()
+
+
+class StoreNameTruncationTests(unittest.TestCase):
+    def test_text_report_truncates_store_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_long_store(db)
+
+            proc = run_python(REPORTS_DIR / "lkdr_report.py", "--db", str(db), "--color", "never")
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn(LONG_STORE_NAME[:37] + "...", proc.stdout)
+            self.assertNotIn(LONG_STORE_NAME, proc.stdout)
+
+    def test_text_report_store_limit_follows_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            config = Path(tmp) / "config.json"
+            make_ai_test_db(db)
+            add_long_store(db)
+            config.write_text('{"reports": {"maxItemNameChars": 12}}', encoding="utf-8")
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db), "--config", str(config), "--color", "never",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn(LONG_STORE_NAME[:9] + "...", proc.stdout)
+            self.assertNotIn(LONG_STORE_NAME, proc.stdout)
+
+    def test_html_report_keeps_full_store_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            add_long_store(db)
+
+            proc = run_python(
+                REPORTS_DIR / "ai_report.py",
+                "--db", str(db), "--out-dir", str(out), "--no-ai",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            content = (out / "lkdr-2026-09.html").read_text(encoding="utf-8")
+            self.assertIn(LONG_STORE_NAME, content)
+
+
 class ExampleReportTests(unittest.TestCase):
     def run_example(self, *args: str) -> subprocess.CompletedProcess[str]:
         return run_python(REPORTS_DIR / "example.py", *args)

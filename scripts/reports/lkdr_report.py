@@ -891,16 +891,16 @@ def build_ai_prompt(
         return truncate_cell(name, max_item_name_chars)
 
     store_change_lines = (
-        f"{name}: {compact_money_delta(current, previous, currency)}"
+        f"{short_item(name)}: {compact_money_delta(current, previous, currency)}"
         for name, current, previous in store_changes
+    )
+    store_lines = (
+        f"{short_item(name)}: чеков {count}, {compact_money_delta(total, previous_total, currency)}, доля {percent(total, stats.total)}"
+        for name, count, total, previous_total in store_rows
     )
     item_change_lines = (
         f"{short_item(name)}: {compact_money_delta(current, previous, currency)}"
         for name, current, previous in item_changes
-    )
-    store_lines = (
-        f"{name}: чеков {count}, {compact_money_delta(total, previous_total, currency)}, доля {percent(total, stats.total)}"
-        for name, count, total, previous_total in store_rows
     )
     item_lines = (
         f"{short_item(name)}: количество {quantity:.3g}, {compact_money_delta(total, previous_total, currency)}, доля {percent(total, stats.total)}"
@@ -1157,7 +1157,8 @@ def run_report(
     currencies = sorted(set(current.stats_by_currency) | set(previous.stats_by_currency))
 
     def short_item(name: str) -> str:
-        # Только отображение: агрегация и ключи previous.items — по полным именам.
+        # Только отображение (товары и магазины): агрегация и ключи
+        # previous.items/previous.stores — по полным именам.
         return truncate_cell(name, max_item_name_chars)
 
     # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
@@ -1356,7 +1357,7 @@ def run_report(
             ("Магазин", "Сейчас", "Было", "Изменение"),
             (
                 (
-                    store,
+                    short_item(store),
                     money(current_total, currency),
                     money(previous_total, currency),
                     colored_expense_delta(current_total, previous_total, currency),
@@ -1426,7 +1427,7 @@ def run_report(
             print_table(
                 ("Магазин", "Чеки", "Сумма"),
                 (
-                    (store, count, money(total, currency))
+                    (short_item(store), count, money(total, currency))
                     for store, count, total in refund_rows
                 ),
             )
@@ -1453,7 +1454,7 @@ def run_report(
             ("Магазин", "Чеки", "Сейчас", "Было", "Изменение", "Доля"),
             (
                 (
-                    store,
+                    short_item(store),
                     count,
                     money(total, currency),
                     money(previous_total, currency),
