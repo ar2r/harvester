@@ -1,20 +1,34 @@
 name: CI
 
-on: [ push, workflow_dispatch ]
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# Новый push в ветку отменяет незаконченный прогон той же ветки.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
       - name: Vet
         run: go vet ./...
       - name: Build
         run: make bin
       - name: Test
         run: make test
+      # Отдельный прогон с race-детектором: make test гоняет без -race,
+      # а код насыщен горутинами (реестр задач, триггеры, загрузчики).
+      - name: Race
+        run: go test -race ./...
