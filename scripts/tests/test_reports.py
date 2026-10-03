@@ -424,6 +424,37 @@ class ItemNameCharsConfigTests(unittest.TestCase):
                     _config.load_max_item_name_chars(config)
 
 
+class FamilyContextTests(unittest.TestCase):
+    def test_missing_file_returns_empty(self):
+        self.assertEqual(_config.load_family_context(Path("/nonexistent/FAMILY.md")), "")
+
+    def test_reads_and_strips_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            family = Path(tmp) / "FAMILY.md"
+            family.write_text("## Состав\n\n- Взрослых (18+): 2\n\n  \n", encoding="utf-8")
+            self.assertEqual(
+                _config.load_family_context(family), "## Состав\n\n- Взрослых (18+): 2"
+            )
+
+    def test_intro_uses_file_context_when_present(self):
+        intro = base_module.family_intro("- Взрослых (18+): 1, подростков: 0")
+        self.assertIn("FAMILY.md", intro)
+        self.assertIn("Взрослых (18+): 1", intro)
+        self.assertNotIn("2 взрослых", intro)
+
+    def test_intro_fallback_without_file(self):
+        intro = base_module.family_intro("")
+        self.assertIn("2 взрослых и 2 подростков", intro)
+        self.assertNotIn("FAMILY.md", intro)
+
+    def test_dist_template_committed_with_sections(self):
+        template = SCRIPTS_DIR.parent / "FAMILY.md.dist"
+        self.assertTrue(template.exists(), "FAMILY.md.dist должен быть в репозитории")
+        text = template.read_text(encoding="utf-8")
+        for section in ("## Состав", "## Питание и привычки", "## Акценты отчётов"):
+            self.assertIn(section, text)
+
+
 class ItemNameTruncationTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

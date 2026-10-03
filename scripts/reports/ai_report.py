@@ -421,7 +421,11 @@ def pick_currency(current: base.PeriodReport, previous: base.PeriodReport, prefe
 # AI-выводы
 # ---------------------------------------------------------------------------
 
-def build_ai_json_prompt(data: dict, max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS) -> str:
+def build_ai_json_prompt(
+    data: dict,
+    max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+    family_context: str = "",
+) -> str:
     stats = data["stats"]
     previous_stats = data["previous_stats"]
     currency = data["currency"]
@@ -457,8 +461,8 @@ def build_ai_json_prompt(data: dict, max_item_name_chars: int = _config.DEFAULT_
     ]
 
     return f"""
-Ты финансовый помощник. Проанализируй расходы семьи из 2 взрослых и 2 подростков
-(обычно питаются дома). Отчёт построен по чекам ФНС: возвраты, отмены и дубли
+Ты финансовый помощник. {base.family_intro(family_context)}
+Отчёт построен по чекам ФНС: возвраты, отмены и дубли
 закрытия предоплаты уже учтены. Используй только данные ниже, ничего не выдумывай.
 
 Ответь СТРОГО одним валидным JSON-объектом без markdown-разметки по схеме:
@@ -1085,7 +1089,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_ai:
         ai_payload, ai_error = request_ai(
-            build_ai_json_prompt(data, max_item_name_chars), ai_command, args.ai_timeout
+            build_ai_json_prompt(
+                data, max_item_name_chars, family_context=_config.load_family_context()
+            ),
+            ai_command,
+            args.ai_timeout
         )
         if ai_error:
             print(f"AI недоступен ({ai_error}); карточки построены из данных", file=sys.stderr)

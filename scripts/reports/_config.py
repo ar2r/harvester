@@ -28,6 +28,10 @@ DEFAULT_MAX_ITEM_NAME_CHARS = 40
 # сумма по категории) — приватные покупки: аптечка, врачи, анализы, гигиена.
 DEFAULT_PRIVATE_CATEGORIES = ["Аптека и здоровье", "Косметика и гигиена"]
 
+# Портрет семьи для AI-промптов: локальный FAMILY.md (в .gitignore),
+# шаблон — FAMILY.md.dist. Без файла отчёты используют встроенный фолбэк.
+FAMILY_FILE = Path("FAMILY.md")
+
 CONFIG_KEY_SECTION = "ai"
 CONFIG_KEY_COMMAND = "command"
 CONFIG_REPORTS_SECTION = "reports"
@@ -80,6 +84,18 @@ def load_max_item_name_chars(
         )
 
     return value
+
+
+def load_family_context(path: Path = FAMILY_FILE) -> str:
+    """Содержимое FAMILY.md — портрет семьи для AI-промптов отчётов.
+
+    Нет файла или не читается — пустая строка (отчёты подставят фолбэк
+    DEFAULT_FAMILY_SUMMARY). Файл персональный, в Git не попадает.
+    """
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def load_private_categories(

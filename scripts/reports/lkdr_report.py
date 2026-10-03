@@ -859,6 +859,21 @@ def compact_money_delta(current: float, previous: float, currency: str) -> str:
     return f"{money(current, currency)} / было {money(previous, currency)} / изменение {money_delta(current, previous, currency)}"
 
 
+def family_intro(family_context: str) -> str:
+    """Вводная про семью для AI-промпта: FAMILY.md или фолбэк-формулировка."""
+    if family_context:
+        return (
+            "Проанализируй расходы домашнего хозяйства.\n"
+            "Контекст семьи (из локального файла пользователя FAMILY.md):\n"
+            + family_context
+        )
+
+    return (
+        "Проанализируй расходы семьи из 2 взрослых и 2 подростков.\n"
+        "Семья обычно питается дома."
+    )
+
+
 def build_ai_prompt(
     *,
     currency_label: str,
@@ -881,6 +896,7 @@ def build_ai_prompt(
     service_rows: list[tuple[str, float, float]],
     recurring_rows: list[tuple[str, int, float, float, float]],
     max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+    family_context: str = "",
 ) -> str:
     def lines(title: str, rows: Iterable[str]) -> str:
         body = "\n".join(f"- {row}" for row in rows)
@@ -923,8 +939,8 @@ def build_ai_prompt(
     )
 
     return f"""
-Ты финансовый помощник. Проанализируй расходы семьи из 2 взрослых и 2 подростков.
-Семья обычно питается дома. Отчет построен по чекам ФНС, уже учтены возвраты/отмены,
+Ты финансовый помощник. {family_intro(family_context)}
+Отчет построен по чекам ФНС, уже учтены возвраты/отмены,
 дубли закрытия предоплаты интернет-магазинов и разделение валют.
 
 Нужно дать практичное заключение на русском языке. Не пересказывай все таблицы.
@@ -1600,6 +1616,7 @@ def run_report(
                 service_rows=service_rows,
                 recurring_rows=recurring_rows,
                 max_item_name_chars=max_item_name_chars,
+                family_context=_config.load_family_context(),
             )
             print_ai_summary(prompt, ai_command, ai_timeout)
 

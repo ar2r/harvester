@@ -12,6 +12,9 @@ config.local.json
 .env
 .env.*
 
+# Family profile for AI reports (personal data)
+FAMILY.md
+
 # Local databases
 *.db
 *.sqlite
