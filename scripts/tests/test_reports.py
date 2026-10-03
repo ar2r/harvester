@@ -24,6 +24,7 @@ LAUNCHER = SCRIPTS_DIR / "report.py"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(REPORTS_DIR))
 import _config  # noqa: E402 — scripts/reports/_config.py
+import lkdr_report as base_module  # noqa: E402 — scripts/reports/lkdr_report.py
 import report  # noqa: E402 — scripts/report.py
 
 
@@ -494,6 +495,102 @@ class ItemNameTruncationTests(unittest.TestCase):
         )
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("maxItemNameChars", proc.stderr)
+
+
+MED_ITEM_NAME = "Капли глазные тестовые 10 мл"  # синтетическое нейтральное название
+
+
+def add_med_item(db: Path) -> None:
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "insert into receipts values ('c9','79000000001',NULL,'INDIVIDUAL','2026-09-12 11:00:00','1','dc9','Аптека тестовая','7700000009','2026-09-12 11:00:00','999.0',NULL)"
+    )
+    connection.execute(
+        "insert into fiscal_data values ('c9','2026-09-12 11:00:00',999.0,1,0.0,'Аптека тестовая','г. Москва','Аптека тестовая','7700000009')"
+    )
+    connection.execute(
+        "insert into fiscal_data_items values ('c9',1,?,10,4,999.0,1,NULL,1,999.0)",
+        (MED_ITEM_NAME,),
+    )
+    connection.commit()
+    connection.close()
+
+
+class PrivateCategoriesTests(unittest.TestCase):
+    def test_config_defaults(self):
+        self.assertEqual(
+            _config.load_private_categories(Path("/nonexistent/config.json")),
+            ["Аптека и здоровье"],
+        )
+
+    def test_config_custom_and_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text('{"reports": {"privateCategories": ["Одежда"]}}', encoding="utf-8")
+            self.assertEqual(_config.load_private_categories(config), ["Одежда"])
+
+            config.write_text('{"reports": {"privateCategories": []}}', encoding="utf-8")
+            self.assertEqual(_config.load_private_categories(config), [])
+
+    def test_config_invalid_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text('{"reports": {"privateCategories": "аптека"}}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                _config.load_private_categories(config)
+
+    def test_generic_markers_catch_med_items(self):
+        # Маркеры — обобщённые основы слов, без конкретных препаратов.
+        self.assertEqual(base_module.categorize_item("Капли глазные тестовые"), "Аптека и здоровье")
+        self.assertEqual(base_module.categorize_item("Приём врача, консультация"), "Аптека и здоровье")
+        self.assertEqual(base_module.categorize_item("Табл. жаропонижающие N10"), "Аптека и здоровье")
+        self.assertEqual(base_module.categorize_item("Молоко 3.2% 1л"), "Молочные продукты")
+
+    def test_lkdr_report_hides_private_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            make_ai_test_db(db)
+            add_med_item(db)
+
+            proc = run_python(REPORTS_DIR / "lkdr_report.py", "--db", str(db), "--color", "never")
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn(MED_ITEM_NAME, proc.stdout)
+            self.assertIn("Аптека и здоровье", proc.stdout)
+            self.assertIn("999.00", proc.stdout)
+
+    def test_lkdr_report_empty_private_config_shows_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            config = Path(tmp) / "config.json"
+            make_ai_test_db(db)
+            add_med_item(db)
+            config.write_text('{"reports": {"privateCategories": []}}', encoding="utf-8")
+
+            proc = run_python(
+                REPORTS_DIR / "lkdr_report.py",
+                "--db", str(db), "--config", str(config), "--color", "never",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn(MED_ITEM_NAME, proc.stdout)
+
+    def test_ai_report_hides_private_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "lkdr.db"
+            out = Path(tmp) / "reports"
+            make_ai_test_db(db)
+            add_med_item(db)
+
+            proc = run_python(
+                REPORTS_DIR / "ai_report.py",
+                "--db", str(db), "--out-dir", str(out), "--no-ai",
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            content = (out / "lkdr-2026-09.html").read_text(encoding="utf-8")
+            self.assertNotIn(MED_ITEM_NAME, content)
+            self.assertIn("Аптека и здоровье", content)
 
 
 class ExampleReportTests(unittest.TestCase):

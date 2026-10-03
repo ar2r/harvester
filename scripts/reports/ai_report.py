@@ -259,7 +259,11 @@ def signed_geometry(rows: list[tuple[str, float, float]]) -> tuple[float, object
 # Данные
 # ---------------------------------------------------------------------------
 
-def collect(conn: sqlite3.Connection, args: argparse.Namespace) -> dict:
+def collect(
+    conn: sqlite3.Connection,
+    args: argparse.Namespace,
+    private_categories: list[str] | None = None,
+) -> dict:
     end = args.as_of or base.latest_receipt_datetime(conn)
     start = end - timedelta(days=args.days)
     previous_end = start
@@ -306,16 +310,40 @@ def collect(conn: sqlite3.Connection, args: argparse.Namespace) -> dict:
         reverse=True,
     )
 
+    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
+    # выводятся построчно: суммы остаются только на уровне категории.
+    private = set(
+        private_categories
+        if private_categories is not None
+        else _config.DEFAULT_PRIVATE_CATEGORIES
+    )
+
+    def hidden_item(name: str) -> bool:
+        return base.categorize_item(name) in private
+
     recurring = []
     for (item_currency, name), item in current.items.items():
         if item_currency != currency or item.total <= 0:
             continue
         purchases = len(item.purchase_receipts)
-        if purchases > 1 and item.quantity > 1 and not base.is_service_item(name):
+        if (
+            purchases > 1
+            and item.quantity > 1
+            and not base.is_service_item(name)
+            and not hidden_item(name)
+        ):
             recurring.append((name, purchases, item.quantity, item.total, item.total / item.quantity))
     recurring.sort(key=lambda row: row[3], reverse=True)
 
-    top_items = sorted(current_items.items(), key=lambda pair: pair[1], reverse=True)[: args.top]
+    top_items = sorted(
+        (
+            (name, total)
+            for name, total in current_items.items()
+            if not hidden_item(name)
+        ),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[: args.top]
 
     return {
         "end": end,
@@ -912,22 +940,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Шаблон не читается: {error}", file=sys.stderr)
         return 1
 
+    try:
+        max_item_name_chars = _config.load_max_item_name_chars(args.config)
+        private_categories = _config.load_private_categories(args.config)
+    except ValueError as error:
+        print(f"{args.config}: {error}", file=sys.stderr)
+        return 1
+
     conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         base.require_tables(conn)
-        data = collect(conn, args)
+        data = collect(conn, args, private_categories)
     finally:
         conn.close()
     data["as_of_auto"] = args.as_of is None
 
     ai_payload, ai_error = (None, None)
     ai_command = args.ai_command or _config.load_ai_command(args.config)
-    try:
-        max_item_name_chars = _config.load_max_item_name_chars(args.config)
-    except ValueError as error:
-        print(f"{args.config}: {error}", file=sys.stderr)
-        return 1
 
     if not args.no_ai:
         ai_payload, ai_error = request_ai(

@@ -322,13 +322,25 @@ CATEGORY_RULES = (
         (
             "аптека",
             "лекар",
-            "таблет",
+            "табл",
+            "капс.",
+            "капл",
+            "мазь",
             "витамин",
             "спрей",
             "сироп",
             "бинт",
             "пластыр",
-            "линзы",
+            "линз",
+            "анализ",
+            "крови",
+            "диагност",
+            "сорбент",
+            "эмульс",
+            "врач",
+            "клиник",
+            "лаборатор",
+            "процедур",
         ),
     ),
     (
@@ -906,6 +918,7 @@ def run_report(
     ai_command: str,
     ai_timeout: int,
     max_item_name_chars: int = _config.DEFAULT_MAX_ITEM_NAME_CHARS,
+    private_categories: list[str] | None = None,
 ) -> None:
     if days < 1:
         raise SystemExit("--days must be at least 1")
@@ -937,6 +950,13 @@ def run_report(
     def short_item(name: str) -> str:
         # Только отображение: агрегация и ключи previous.items — по полным именам.
         return truncate_cell(name, max_item_name_chars)
+
+    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
+    # выводятся построчно: их суммы видны только на уровне категории.
+    private = set(private_categories if private_categories is not None else _config.DEFAULT_PRIVATE_CATEGORIES)
+
+    def hidden_item(name: str) -> bool:
+        return categorize_item(name) in private
 
     for currency in currencies:
         stats = current.stats_by_currency[currency]
@@ -987,12 +1007,12 @@ def run_report(
             {
                 name: total
                 for name, total in current_item_totals.items()
-                if not is_service_item(name)
+                if not is_service_item(name) and not hidden_item(name)
             },
             {
                 name: total
                 for name, total in previous_item_totals.items()
-                if not is_service_item(name)
+                if not is_service_item(name) and not hidden_item(name)
             },
             top,
         )
@@ -1200,6 +1220,7 @@ def run_report(
                 if item_currency == currency
                 and value.total > 0
                 and not is_service_item(name)
+                and not hidden_item(name)
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1227,7 +1248,10 @@ def run_report(
             (
                 (name, value.quantity, value.total)
                 for (item_currency, name), value in current.items.items()
-                if item_currency == currency and value.total > 0 and is_service_item(name)
+                if item_currency == currency
+                and value.total > 0
+                and is_service_item(name)
+                and not hidden_item(name)
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1266,6 +1290,7 @@ def run_report(
                 and value.quantity > 1
                 and len(value.purchase_receipts) > 1
                 and not is_service_item(name)
+                and not hidden_item(name)
             ),
             key=lambda row: (row[2], row[3]),
             reverse=True,
@@ -1392,6 +1417,7 @@ def main() -> None:
     args.ai_command = args.ai_command or _config.load_ai_command(args.config)
     try:
         max_item_name_chars = _config.load_max_item_name_chars(args.config)
+        private_categories = _config.load_private_categories(args.config)
     except ValueError as error:
         raise SystemExit(f"{args.config}: {error}")
     run_report(
@@ -1406,6 +1432,7 @@ def main() -> None:
         args.ai_command,
         args.ai_timeout,
         max_item_name_chars,
+        private_categories,
     )
 
 

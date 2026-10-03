@@ -24,11 +24,15 @@ from pathlib import Path
 DEFAULT_AI_COMMAND = "codex exec --color never --sandbox read-only -"
 
 DEFAULT_MAX_ITEM_NAME_CHARS = 40
+# Категории, товары которых не выводятся в отчётах построчно (видна только
+# сумма по категории) — приватные покупки: аптечка, врачи, анализы.
+DEFAULT_PRIVATE_CATEGORIES = ["Аптека и здоровье"]
 
 CONFIG_KEY_SECTION = "ai"
 CONFIG_KEY_COMMAND = "command"
 CONFIG_REPORTS_SECTION = "reports"
 CONFIG_KEY_MAX_ITEM_NAME_CHARS = "maxItemNameChars"
+CONFIG_KEY_PRIVATE_CATEGORIES = "privateCategories"
 
 
 def load_ai_command(config_path: Path = Path("config.json"), default: str | None = None) -> str:
@@ -73,6 +77,38 @@ def load_max_item_name_chars(
         raise ValueError(
             f"reports.{CONFIG_KEY_MAX_ITEM_NAME_CHARS}: "
             f"ожидается целое число >= 1, получено {value!r}"
+        )
+
+    return value
+
+
+def load_private_categories(
+    config_path: Path = Path("config.json"),
+    default: list[str] | None = None,
+) -> list[str]:
+    """reports.privateCategories из config.json; отсутствие файла/ключа — default.
+
+    Список названий категорий, товары которых скрываются из построчных
+    выводов отчётов (суммы остаются на уровне категории). Пустой список
+    разрешён и отключает скрытие; неверный тип — ValueError.
+    """
+    if default is None:
+        default = list(DEFAULT_PRIVATE_CATEGORIES)
+
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+    section = config.get(CONFIG_REPORTS_SECTION)
+    if not isinstance(section, dict) or CONFIG_KEY_PRIVATE_CATEGORIES not in section:
+        return default
+
+    value = section[CONFIG_KEY_PRIVATE_CATEGORIES]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(
+            f"reports.{CONFIG_KEY_PRIVATE_CATEGORIES}: "
+            f"ожидается список названий категорий, получено {value!r}"
         )
 
     return value
