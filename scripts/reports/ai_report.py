@@ -334,29 +334,35 @@ def collect(
 
     store_rules = base.build_rule_map([])
     receipt_rules = base.build_rule_map([])
-    current = base.build_period_report(conn, start, end, store_rules, receipt_rules)
-    previous = base.build_period_report(conn, previous_start, previous_end, store_rules, receipt_rules)
+
+    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
+    # выводятся построчно: суммы остаются только на уровне категории.
+    private = set(
+        private_categories
+        if private_categories is not None
+        else _config.DEFAULT_PRIVATE_CATEGORIES
+    )
+
+    current = base.build_period_report(conn, start, end, store_rules, receipt_rules, private)
+    previous = base.build_period_report(conn, previous_start, previous_end, store_rules, receipt_rules, private)
 
     currency = pick_currency(current, previous, args.currency)
     stats = current.stats_by_currency[currency]
     previous_stats = previous.stats_by_currency[currency]
 
+    # Магазины чеков с приватными позициями маскируются: объединение за оба
+    # периода, чтобы название не утекло через колонку прошлого периода.
+    hidden_stores = current.private_stores() | previous.private_stores()
+
     def totals(report: base.PeriodReport) -> tuple[dict[str, float], dict[str, float], dict[str, int]]:
-        stores = {
-            store: value.total
-            for (item_currency, store), value in report.stores.items()
-            if item_currency == currency and value.total > 0
-        }
+        masked = base.masked_store_stats(report, currency, hidden_stores)
+        stores = {store: total for store, (_, total) in masked.items()}
         items = {
             name: value.total
             for (item_currency, name), value in report.items.items()
             if item_currency == currency and value.total > 0
         }
-        store_counts = {
-            store: value.count
-            for (item_currency, store), value in report.stores.items()
-            if item_currency == currency and value.total > 0
-        }
+        store_counts = {store: count for store, (count, _) in masked.items()}
         return stores, items, store_counts
 
     current_stores, current_items, current_store_counts = totals(current)
@@ -373,14 +379,6 @@ def collect(
         reverse=True,
     )
 
-    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
-    # выводятся построчно: суммы остаются только на уровне категории.
-    private = set(
-        private_categories
-        if private_categories is not None
-        else _config.DEFAULT_PRIVATE_CATEGORIES
-    )
-
     def hidden_item(name: str) -> bool:
         return base.categorize_item(name) in private
 
@@ -394,21 +392,27 @@ def collect(
             and item.quantity > 1
             and not base.is_service_item(name)
             and not hidden_item(name)
+            and not base.only_private_receipts(item, current.private_receipts)
         ):
             recurring.append((name, purchases, item.quantity, item.total, item.total / item.quantity))
     recurring.sort(key=lambda row: row[3], reverse=True)
 
     top_items = sorted(
         (
-            (name, total)
-            for name, total in current_items.items()
-            if not hidden_item(name)
+            (name, item.total)
+            for (item_currency, name), item in current.items.items()
+            if item_currency == currency
+            and item.total > 0
+            and not hidden_item(name)
+            and not base.only_private_receipts(item, current.private_receipts)
         ),
         key=lambda pair: pair[1],
         reverse=True,
     )[: args.top]
 
     # Разбор Прочего: что осталось без категории — топ позиций и хвост.
+    # Позиции из чеков с приватными покупками не выводятся: медикамент
+    # с незнакомым названием не распознался, но куплен в аптечном чеке.
     other_rows = sorted(
         (
             (name, item.quantity, item.total)
@@ -416,6 +420,7 @@ def collect(
             if item_currency == currency
             and item.total > 0
             and base.categorize_item(name) == "Прочее"
+            and not base.only_private_receipts(item, current.private_receipts)
         ),
         key=lambda row: row[2],
         reverse=True,
@@ -437,11 +442,14 @@ def collect(
     ]
     if basket_days >= 7:
         basket_report = base.build_period_report(
-            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
+            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules, private
         )
-        baskets = base.build_weekly_basket(basket_report, basket_days, args.top, month=month)
+        # Фильтр приватных категорий — до обрезки топа, чтобы скрытая
+        # позиция не занимала строку публичной.
+        baskets = base.build_weekly_basket(
+            basket_report, basket_days, args.top, month=month, private_categories=private
+        )
         for bucket, entries in (baskets.get(currency) or {}).items():
-            entries = [entry for entry in entries if not hidden_item(entry.name)]
             if entries:
                 basket[bucket] = entries
                 bucket_totals[bucket] = sum(entry.adjusted_sum for entry in entries)

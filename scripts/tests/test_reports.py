@@ -1197,6 +1197,109 @@ def make_tz_test_db(path: Path) -> None:
     connection.close()
 
 
+def add_pharmacy_receipt(db: Path) -> None:
+    """Аптечный чек: приватная позиция + позиция без категории.
+
+    «Гематоген» не совпадает ни с одним маркером (ушёл бы в «Прочее»),
+    но куплен в чеке вместе с витамином — эвристика по чеку должна
+    спрятать его и саму аптеку из построчного вывода.
+    """
+    connection = sqlite3.connect(db)
+    when = "2026-09-12 12:00:00"
+    connection.execute(
+        "insert into receipts values (?,?,?,?,?,?,?,?,?,?,?,NULL)",
+        ("rx", "79000000001", None, "INDIVIDUAL", when, "1", "drx", "Аптека Городская", "7700000001", when, "400.00"),
+    )
+    connection.execute(
+        "insert into fiscal_data values (?,?,?,?,?,?,?,?,?)",
+        ("rx", when, 400.0, 1, 0.0, "Аптека Городская", "г. Москва", "Аптека Городская", "7700000001"),
+    )
+    for idx, (name, quantity, total) in enumerate(
+        (("Витамин D капсулы №60", 1, 300.0), ("Гематоген детский", 2, 100.0)), start=1
+    ):
+        connection.execute(
+            "insert into fiscal_data_items values (?,?,?,?,?,?,?,?,?,?)",
+            ("rx", idx, name, 10, 4, total / quantity, 1, None, quantity, total),
+        )
+
+    connection.commit()
+    connection.close()
+
+
+class PrivacyHeuristicTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "priv.db"
+        make_ai_test_db(self.db)
+        add_pharmacy_receipt(self.db)
+
+    def test_pharmacy_receipt_hides_untagged_items_and_store(self):
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--color", "never",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Сумма категории видна, построчных позиций и названия аптеки — нет.
+        self.assertIn("Аптека и здоровье", proc.stdout)
+        self.assertNotIn("Витамин D", proc.stdout)
+        self.assertNotIn("Гематоген", proc.stdout)
+        self.assertNotIn("Аптека Городская", proc.stdout)
+        self.assertIn(base_module.HIDDEN_STORE_LABEL, proc.stdout)
+
+    def test_other_breakdown_keeps_public_uncategorized(self):
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--color", "never",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Разбор Прочего", proc.stdout)
+        # «Кофе в зернах» из публичного чека остаётся в разборе Прочего.
+        self.assertIn("Кофе в зернах", proc.stdout)
+
+    def test_ai_report_hides_pharmacy_rows(self):
+        out_dir = Path(self.tmp.name) / "html"
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(self.db),
+            "--out-dir", str(out_dir),
+            "--no-ai",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        html = "\n".join(p.read_text(encoding="utf-8") for p in out_dir.glob("*.html"))
+        self.assertNotIn("Гематоген", html)
+        self.assertNotIn("Витамин D", html)
+        self.assertNotIn("Аптека Городская", html)
+        self.assertIn(base_module.HIDDEN_STORE_LABEL, html)
+
+    def test_private_grocery_category_excluded_from_basket(self):
+        # Базовый прогон: молоко — регулярная покупка и попадает в корзину.
+        baseline = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--color", "never",
+        )
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        self.assertIn("Корзина продуктов на неделю", baseline.stdout)
+        self.assertIn("Молоко 3.2%", baseline.stdout)
+
+        # Приватная продуктовая категория: молока в корзине больше нет.
+        config = Path(self.tmp.name) / "config.json"
+        config.write_text(
+            '{"reports": {"privateCategories": ["Молочные продукты"]}}', encoding="utf-8"
+        )
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(self.db),
+            "--config", str(config),
+            "--color", "never",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Молоко 3.2%", proc.stdout)
+
+
 class CategoryMarkerTests(unittest.TestCase):
     """Таблица «имя → категория» для спорных названий: регресс конфликта
     маркеров (порядок правил решает, первое совпадение побеждает)."""

@@ -94,6 +94,19 @@ class PeriodReport:
     days_total: defaultdict[tuple[str, str], MutableStats]
     refund_stores: defaultdict[tuple[str, str], MutableStats]
     items: defaultdict[tuple[str, str], ItemStats]
+    # Чеки, в которых есть хотя бы одна позиция приватной категории:
+    # позиции «Прочего» из таких чеков не выводятся построчно, а магазины
+    # маскируются — иначе название аптеки деанонимизирует характер покупки.
+    private_receipts: set[str] = field(default_factory=set)
+    # receipt_key → название магазина (для маскирования магазинов).
+    receipt_store: dict[str, str] = field(default_factory=dict)
+
+    def private_stores(self) -> set[str]:
+        return {
+            store
+            for key, store in self.receipt_store.items()
+            if key in self.private_receipts
+        }
 
 
 CURRENCY_SYMBOLS = {
@@ -827,13 +840,15 @@ def build_weekly_basket(
     window_days: int,
     top: int = 15,
     month: int | None = None,
+    private_categories: set[str] | None = None,
 ) -> dict[str, dict[str, list[BasketEntry]]]:
     """Корзина регулярных продуктов на неделю: {валюта: {бакет: [записи]}}.
 
     Учитываются только продуктовые категории, купленные MIN_BASKET_PURCHASES+
     раз за окно; частота закупок определяется сроком годности. При заданном
     месяце (1-12) записи получают сезонный множитель спроса, а weekly_qty и
-    weekly_sum остаются базовым средним за окно.
+    weekly_sum остаются базовым средним за окно. Позиции приватных
+    категорий в корзину не попадают (единообразно с остальным отчётом).
     """
     weeks = max(window_days / 7.0, 1.0)
     baskets: dict[str, dict[str, list[BasketEntry]]] = {}
@@ -843,6 +858,9 @@ def build_weekly_basket(
 
         category = categorize_item(name)
         if category not in SHELF_LIFE_DAYS:
+            continue
+
+        if private_categories and category in private_categories:
             continue
 
         if len(item.purchase_receipts) < MIN_BASKET_PURCHASES:
@@ -865,6 +883,57 @@ def build_weekly_basket(
             del entries[top:]
 
     return baskets
+
+
+# Единая метка вместо названий магазинов, в чеках которых есть позиции
+# приватных категорий: характер покупки не должен деанонимизироваться.
+HIDDEN_STORE_LABEL = "(скрыто: приватные покупки)"
+
+
+def masked_store_stats(
+    report: PeriodReport,
+    currency: str,
+    hidden_stores: set[str],
+) -> dict[str, tuple[int, float]]:
+    """Статистика магазинов с маскированием: скрытые магазины сливаются
+    в одну строку-заглушку, чеки и суммы при этом сохраняются."""
+    merged: dict[str, tuple[int, float]] = {}
+    for (item_currency, store), value in report.stores.items():
+        if item_currency != currency or value.total <= 0:
+            continue
+
+        key = HIDDEN_STORE_LABEL if store in hidden_stores else store
+        count, total = merged.get(key, (0, 0.0))
+        merged[key] = (count + value.count, total + value.total)
+
+    return merged
+
+
+def masked_refund_stats(
+    report: PeriodReport,
+    currency: str,
+    hidden_stores: set[str],
+) -> dict[str, tuple[int, float]]:
+    merged: dict[str, tuple[int, float]] = {}
+    for (item_currency, store), value in report.refund_stores.items():
+        if item_currency != currency or value.total <= 0:
+            continue
+
+        key = HIDDEN_STORE_LABEL if store in hidden_stores else store
+        count, total = merged.get(key, (0, 0.0))
+        merged[key] = (count + value.count, total + value.total)
+
+    return merged
+
+
+def only_private_receipts(item: ItemStats, private_receipts: set[str]) -> bool:
+    """Позиция встречалась только в чеках с приватными покупками.
+
+    Так из «Разбора Прочего» исчезают медикаменты с незнакомым названием:
+    они не совпали ни с одним маркером словаря, но куплены в аптечном чеке.
+    """
+    receipts = item.purchase_receipts | item.refund_receipts
+    return bool(receipts) and receipts <= private_receipts
 
 
 def category_totals(item_totals: Mapping[str, float]) -> defaultdict[str, float]:
@@ -1128,6 +1197,7 @@ def build_period_report(
     end: datetime,
     store_rules: Mapping[str, str],
     receipt_rules: Mapping[str, str],
+    private_categories: set[str] | None = None,
 ) -> PeriodReport:
     receipts = conn.execute(
         """
@@ -1152,6 +1222,8 @@ def build_period_report(
     ).fetchall()
 
     receipt_currencies: dict[str, str] = {}
+    receipt_store: dict[str, str] = {}
+    private_receipts: set[str] = set()
     stats_by_currency: defaultdict[str, MutableStats] = defaultdict(MutableStats)
     stores: defaultdict[tuple[str, str], MutableStats] = defaultdict(MutableStats)
     days_total: defaultdict[tuple[str, str], MutableStats] = defaultdict(MutableStats)
@@ -1160,6 +1232,7 @@ def build_period_report(
     for row in receipts:
         currency = detect_currency(row, store_rules, receipt_rules)
         receipt_currencies[row["receipt_key"]] = currency
+        receipt_store[row["receipt_key"]] = store_name(row)
         stats = stats_by_currency[currency]
         unsigned_spend = effective_spend(row)
         spend = signed_effective_spend(row)
@@ -1207,6 +1280,9 @@ def build_period_report(
         if effective_spend(row) <= 0:
             continue
 
+        if private_categories and categorize_item(row["name"]) in private_categories:
+            private_receipts.add(row["receipt_key"])
+
         currency = receipt_currencies.get(row["receipt_key"], "RUB")
         item = items[(currency, row["name"])]
         sign = operation_sign(row)
@@ -1225,6 +1301,8 @@ def build_period_report(
         days_total=days_total,
         refund_stores=refund_stores,
         items=items,
+        private_receipts=private_receipts,
+        receipt_store=receipt_store,
     )
 
 
@@ -1278,13 +1356,26 @@ def run_report(
     previous_start = previous_end - timedelta(days=days)
     store_rules = build_rule_map(store_currency_rules)
     receipt_rules = build_rule_map(receipt_currency_rules)
-    current = build_period_report(conn, start, end, store_rules, receipt_rules)
-    previous = build_period_report(conn, previous_start, previous_end, store_rules, receipt_rules)
+
+    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
+    # выводятся построчно: их суммы видны только на уровне категории.
+    # Чеки с такими позициями дополнительно скрывают «Прочее» и магазины.
+    private = set(private_categories if private_categories is not None else _config.DEFAULT_PRIVATE_CATEGORIES)
+
+    current = build_period_report(conn, start, end, store_rules, receipt_rules, private)
+    previous = build_period_report(conn, previous_start, previous_end, store_rules, receipt_rules, private)
 
     print_header("Отчет по покупкам")
     print(f"{COLOR.muted('База данных:')} {db_path}")
     print(f"{COLOR.muted('Текущий период:')} {start:%Y-%m-%d %H:%M} - {end:%Y-%m-%d %H:%M}")
     print(f"{COLOR.muted('Период сравнения:')} {previous_start:%Y-%m-%d %H:%M} - {previous_end:%Y-%m-%d %H:%M}")
+    if private:
+        print(
+            COLOR.muted(
+                f"Приватность: позиции категорий {', '.join(sorted(private))} построчно не выводятся "
+                f"(суммы учтены в категориях); магазины таких чеков показаны как «{HIDDEN_STORE_LABEL}»."
+            )
+        )
     print()
 
     currencies = sorted(set(current.stats_by_currency) | set(previous.stats_by_currency))
@@ -1294,12 +1385,12 @@ def run_report(
         # previous.items/previous.stores — по полным именам.
         return truncate_cell(name, max_item_name_chars)
 
-    # Товары приватных категорий (по умолчанию аптечка/врачи/анализы) не
-    # выводятся построчно: их суммы видны только на уровне категории.
-    private = set(private_categories if private_categories is not None else _config.DEFAULT_PRIVATE_CATEGORIES)
-
     def hidden_item(name: str) -> bool:
         return categorize_item(name) in private
+
+    # Маскирование магазинов: объединение приватных за оба периода, чтобы
+    # название не утекало через колонку «Было» предыдущего периода.
+    hidden_stores = current.private_stores() | previous.private_stores()
 
     for currency in currencies:
         stats = current.stats_by_currency[currency]
@@ -1311,15 +1402,13 @@ def run_report(
             previous_stats.total / previous_stats.count if previous_stats.count else 0
         )
         previous_avg_day = previous_stats.total / days
+        current_stores_masked = masked_store_stats(current, currency, hidden_stores)
+        previous_stores_masked = masked_store_stats(previous, currency, hidden_stores)
         current_store_totals = {
-            store: value.total
-            for (item_currency, store), value in current.stores.items()
-            if item_currency == currency and value.total > 0
+            store: total for store, (_, total) in current_stores_masked.items()
         }
         previous_store_totals = {
-            store: value.total
-            for (item_currency, store), value in previous.stores.items()
-            if item_currency == currency and value.total > 0
+            store: total for store, (_, total) in previous_stores_masked.items()
         }
         current_item_totals = {
             name: value.total
@@ -1346,15 +1435,29 @@ def run_report(
             reverse=True,
         )
         store_changes = changed_rows(current_store_totals, previous_store_totals, top)
+
+        def public_item_totals(report: PeriodReport) -> dict[str, float]:
+            # Публичные позиции для построчных списков: без приватных
+            # категорий и без позиций, встречавшихся только в приватных чеках.
+            return {
+                name: item.total
+                for (item_currency, name), item in report.items.items()
+                if item_currency == currency
+                and item.total > 0
+                and not only_private_receipts(item, report.private_receipts)
+            }
+
+        current_public_items = public_item_totals(current)
+        previous_public_items = public_item_totals(previous)
         item_changes = changed_rows(
             {
                 name: total
-                for name, total in current_item_totals.items()
+                for name, total in current_public_items.items()
                 if not is_service_item(name) and not hidden_item(name)
             },
             {
                 name: total
-                for name, total in previous_item_totals.items()
+                for name, total in previous_public_items.items()
                 if not is_service_item(name) and not hidden_item(name)
             },
             top,
@@ -1456,6 +1559,7 @@ def run_report(
                     if item_currency == currency
                     and value.total > 0
                     and categorize_item(name) == "Прочее"
+                    and not only_private_receipts(value, current.private_receipts)
                 ),
                 key=lambda row: row[2],
                 reverse=True,
@@ -1548,9 +1652,10 @@ def run_report(
 
         refund_rows = sorted(
             (
-                (store, value.count, value.total)
-                for (item_currency, store), value in current.refund_stores.items()
-                if item_currency == currency and value.total > 0
+                (store, count, total)
+                for store, (count, total) in masked_refund_stats(
+                    current, currency, hidden_stores
+                ).items()
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1571,14 +1676,8 @@ def run_report(
         print(f"Топ-{top} магазинов")
         store_rows = sorted(
             (
-                (
-                    store,
-                    value.count,
-                    value.total,
-                    previous.stores[(currency, store)].total,
-                )
-                for (item_currency, store), value in current.stores.items()
-                if item_currency == currency and value.total > 0
+                (store, count, total, previous_store_totals.get(store, 0.0))
+                for store, (count, total) in current_stores_masked.items()
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1610,6 +1709,7 @@ def run_report(
                 and value.total > 0
                 and not is_service_item(name)
                 and not hidden_item(name)
+                and not only_private_receipts(value, current.private_receipts)
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1641,6 +1741,7 @@ def run_report(
                 and value.total > 0
                 and is_service_item(name)
                 and not hidden_item(name)
+                and not only_private_receipts(value, current.private_receipts)
             ),
             key=lambda row: row[2],
             reverse=True,
@@ -1680,6 +1781,7 @@ def run_report(
                 and len(value.purchase_receipts) > 1
                 and not is_service_item(name)
                 and not hidden_item(name)
+                and not only_private_receipts(value, current.private_receipts)
             ),
             key=lambda row: (row[2], row[3]),
             reverse=True,
@@ -1742,9 +1844,11 @@ def run_report(
     # с сезонной поправкой по месяцу конца периода.
     if basket_days >= 7:
         basket_report = build_period_report(
-            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules
+            conn, end - timedelta(days=basket_days), end, store_rules, receipt_rules, private
         )
-        baskets = build_weekly_basket(basket_report, basket_days, top, month=end.month)
+        baskets = build_weekly_basket(
+            basket_report, basket_days, top, month=end.month, private_categories=private
+        )
         for currency, buckets in baskets.items():
             currency_label = CURRENCY_NAMES.get(currency, currency)
             weekly_total = sum(
