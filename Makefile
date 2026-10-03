@@ -6,8 +6,9 @@ LKDR_CURRENCY_ARGS ?=
 LKDR_COLOR ?= auto
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
+CONFIG_FILE ?= ./config.json
 
-.PHONY: test bin build run clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
+.PHONY: test bin build run parse clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
 
 test:
 	go test -v ./...
@@ -20,7 +21,10 @@ bin: $(subst ./cmd,bin,$(wildcard ./cmd/*))
 build: bin
 
 run: build
-	./bin/app --config.file=./config.json --log.level=DEBUG --stdin.user='$(RUN_USER)'
+	./bin/app --config.file='$(CONFIG_FILE)' --log.level=DEBUG --stdin.user='$(RUN_USER)'
+
+parse: build
+	./bin/app --config.file='$(CONFIG_FILE)' --stdin.user=all
 
 clean:
 	rm -rf bin/*
