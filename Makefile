@@ -7,11 +7,13 @@ LKDR_COLOR ?= auto
 LKDR_AI_ARGS ?=
 RUN_USER ?= all
 CONFIG_FILE ?= ./config.json
+REPORT_ARGS ?=
 
-.PHONY: test bin build run parse clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
+.PHONY: test bin build run parse report clean lkdr-report lkdr-report-short lkdr-report-ai lkdr-report-file
 
 test:
 	go test -v ./...
+	python3 -m unittest discover -s scripts/tests -v
 
 bin/%: $(wildcard ./internal/**/*) $(wildcard ./internal/*/*) $(wildcard ./cmd/$(@:bin/%=%)/*)
 	go build -o $@ -v ./cmd/$(@:bin/%=%)
@@ -26,11 +28,14 @@ run: build
 parse: build
 	./bin/app --config.file='$(CONFIG_FILE)' --stdin.user=all
 
+report:
+	./scripts/report.py $(REPORT_ARGS)
+
 clean:
 	rm -rf bin/*
 
 lkdr-report:
-	./scripts/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color $(LKDR_COLOR) $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS)
+	./scripts/reports/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color $(LKDR_COLOR) $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS)
 
 lkdr-report-short:
 	$(MAKE) lkdr-report LKDR_TOP=5
@@ -39,4 +44,4 @@ lkdr-report-ai:
 	$(MAKE) lkdr-report LKDR_AI_ARGS="--ai-summary $(LKDR_AI_ARGS)"
 
 lkdr-report-file:
-	./scripts/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color never $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS) > $(LKDR_REPORT_OUT)
+	./scripts/reports/lkdr_report.py --db $(LKDR_DB) --days $(LKDR_DAYS) --top $(LKDR_TOP) --color never $(LKDR_CURRENCY_ARGS) $(LKDR_AI_ARGS) > $(LKDR_REPORT_OUT)

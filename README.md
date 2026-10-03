@@ -10,8 +10,8 @@
 
 - [Начало работы](docs/getting-started.md) — сборка, конфиг, первый запуск, устройство приложения;
 - [Конфигурация](docs/configuration.md) — справочник по `config.json`;
-- [Разработка](docs/development.md) — команды, тесты, мок-сервис ФНС;
-- [Отчёт по покупкам LKDR](docs/lkdr-report.md) — полный гайд по `scripts/lkdr_report.py`.
+- [Разработка](docs/development.md) — команды, тесты, мок-сервис ФНС, свои Python-отчёты;
+- [Отчёт по покупкам LKDR](docs/lkdr-report.md) — полный гайд по основному отчёту.
 
 ## Быстрый старт: настройка с нуля
 
@@ -81,13 +81,15 @@ make parse
 ./bin/app --json --config.file=config.json --stdin.user=all
 ```
 
-### 4. Отчёт по покупкам
+### 4. Отчёты
 
 ```bash
-make lkdr-report
+make report
 ```
 
-Все параметры конфигурации — в [документации](docs/configuration.md).
+`make report` открывает интерактивное меню Python-отчётов (выбор номером
+или id). Основной отчёт по покупкам можно запустить и напрямую:
+`make lkdr-report`. Как добавить свой отчёт — в [документации](docs/development.md#python-отчёты-меню-и-свои-скрипты).
 
 ## Лицензия
 

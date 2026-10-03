@@ -7,10 +7,11 @@
 | Команда | Назначение |
 |---------|-----------|
 | `make build` / `make bin` | Сборка бинарников в `bin/` (`app`, `mocklkdr`). |
-| `make test` | `go test -v ./...`. |
+| `make test` | `go test -v ./...` + автотесты Python-отчётов (`python3 -m unittest discover -s scripts/tests`). |
 | `make parse` | Парсинг чеков всех пользователей из `./config.json` по очереди; приложение завершается само после последнего (`CONFIG_FILE` переопределяет путь конфига). |
 | `make run` | Сборка и запуск с `./config.json`: DEBUG-логи, все пользователи из конфига (`RUN_USER=all` по умолчанию). |
 | `make clean` | Очистка `bin/`. |
+| `make report` | Интерактивное меню Python-отчётов из `scripts/reports/`; аргументы пробрасываются выбранным скриптам: `make report REPORT_ARGS="--db my.db"`. |
 | `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md). |
 | `scripts/dist.sh` | Релизные архивы в `bin/` для windows/linux/darwin × amd64/arm64 (матрица сужается `GOOSES=… GOARCHES=…`; кросс требует C-компилятор из-за SQLite/CGO). |
 
@@ -46,13 +47,37 @@ docker compose up -d mocklkdr   # мок на http://127.0.0.1:18080
 Подключение приложения: `"lkdr": { "apiUrl": "http://127.0.0.1:18080", … }`.
 Без docker: `go run ./cmd/mocklkdr -addr :8080`.
 
+## Python-отчёты: меню и свои скрипты
+
+`make report` показывает интерактивное меню всех Python-отчётов и запускает
+выбранный (номер или id, `q` — выход). Отчёты лежат в `scripts/reports/`
+и находятся автоматически:
+
+- каждый `*.py` в `scripts/reports/` — отдельный отчёт, id = имя файла
+  без расширения;
+- файлы с префиксом `_` служебные и в меню не попадают (`_template.py`);
+- заголовок пункта меню — первая строка docstring скрипта.
+
+Чтобы добавить свой отчёт:
+
+1. Скопируйте шаблон: `cp scripts/reports/_template.py scripts/reports/my_report.py`.
+2. Первой строкой docstring задайте заголовок для меню.
+3. Пишите на стандартной библиотеке Python 3.10+; базу открывайте только
+   для чтения, личные данные не логируйте.
+4. `make report` — новый скрипт уже в меню. Без меню: `./scripts/report.py my_report [аргументы]`
+   (для cron и скриптов) и `./scripts/report.py --list` — список отчётов.
+5. Добавьте автотесты в `scripts/tests/test_reports.py` — они запускаются
+   вместе с Go-тестами командой `make test`.
+
+Готовый пример по всем правилам — `scripts/reports/example.py`.
+
 ## Python-окружение для отчётов
 
-`scripts/lkdr_report.py` использует только стандартную библиотеку; нужен Python 3.10+:
+`scripts/reports/lkdr_report.py` использует только стандартную библиотеку; нужен Python 3.10+:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python scripts/lkdr_report.py --help
+.venv/bin/python scripts/reports/lkdr_report.py --help
 PATH="$PWD/.venv/bin:$PATH" make lkdr-report
 ```
 

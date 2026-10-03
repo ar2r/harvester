@@ -1,6 +1,8 @@
 # Отчет по покупкам LKDR
 
-Скрипт `scripts/lkdr_report.py` строит текстовый отчет по покупкам из SQLite-базы `lkdr.db`.
+Скрипт `scripts/reports/lkdr_report.py` строит текстовый отчет по покупкам из SQLite-базы `lkdr.db`.
+Это основной отчёт из набора Python-отчётов; все они доступны через меню `make report`
+(см. [Разработку](development.md#python-отчёты-меню-и-свои-скрипты)).
 Он использует данные чеков ФНС из таблиц `fiscal_data`, `fiscal_data_items`, `receipts` и `brands`.
 
 ## Требования
@@ -21,7 +23,7 @@ make lkdr-report
 Или напрямую:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db
+./scripts/reports/lkdr_report.py --db lkdr.db
 ```
 
 По умолчанию отчет строится за последние 30 дней относительно самого свежего чека в базе
@@ -60,7 +62,7 @@ make lkdr-report LKDR_DAYS=90
 ## Параметры
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db --days 30 --top 10
+./scripts/reports/lkdr_report.py --db lkdr.db --days 30 --top 10
 ```
 
 - `--db` — путь к SQLite-базе. По умолчанию `lkdr.db`.
@@ -78,7 +80,7 @@ make lkdr-report LKDR_DAYS=90
 Пример с фиксированной датой окончания периода:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db --days 30 --as-of '2026-07-05 16:35:00+03:00'
+./scripts/reports/lkdr_report.py --db lkdr.db --days 30 --as-of '2026-07-05 16:35:00+03:00'
 ```
 
 ## Валюты
@@ -89,8 +91,8 @@ make lkdr-report LKDR_DAYS=90
 Для неявных случаев валюту можно задать вручную:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db --days 90 --currency-store 'Kaspi.kz=KZT'
-./scripts/lkdr_report.py --db lkdr.db --days 90 --currency-receipt 'receipt_key=KZT'
+./scripts/reports/lkdr_report.py --db lkdr.db --days 90 --currency-store 'Kaspi.kz=KZT'
+./scripts/reports/lkdr_report.py --db lkdr.db --days 90 --currency-receipt 'receipt_key=KZT'
 ```
 
 Через `make` дополнительные аргументы передаются переменной `LKDR_CURRENCY_ARGS`:
@@ -156,9 +158,9 @@ make lkdr-report LKDR_DAYS=90 LKDR_CURRENCY_ARGS="--currency-store 'Kaspi.kz=KZT
 Режим выбирается параметром `--color`:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db --color auto
-./scripts/lkdr_report.py --db lkdr.db --color always
-./scripts/lkdr_report.py --db lkdr.db --color never
+./scripts/reports/lkdr_report.py --db lkdr.db --color auto
+./scripts/reports/lkdr_report.py --db lkdr.db --color always
+./scripts/reports/lkdr_report.py --db lkdr.db --color never
 ```
 
 Через `make`:
@@ -174,7 +176,7 @@ make lkdr-report LKDR_COLOR=always
 AI-резюме запускается отдельным флагом:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db --days 30 --top 30 --ai-summary
+./scripts/reports/lkdr_report.py --db lkdr.db --days 30 --top 30 --ai-summary
 make lkdr-report LKDR_TOP=30 LKDR_AI_ARGS=--ai-summary
 ```
 
@@ -211,7 +213,7 @@ AI должен сравнить текущий период с предыдущ
 Вывод можно перенаправить в текстовый файл:
 
 ```bash
-./scripts/lkdr_report.py --db lkdr.db > lkdr-report.txt
+./scripts/reports/lkdr_report.py --db lkdr.db > lkdr-report.txt
 ```
 
 ## Пример вывода

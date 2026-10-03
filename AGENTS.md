@@ -5,7 +5,7 @@
 - LedgerFox — Go-приложение (Go 1.24+): задача `lkdr` собирает чеки ФНС «Мои чеки онлайн» в SQLite, stdin-триггер даёт ручной запуск. Точка входа: `cmd/app/main.go`.
 - Ключевые пакеты: `internal/jobs` (реестр задач + `lkdr`), `internal/triggers/stdin`, `internal/database` (GORM, только SQLite, запись через UPSERT), `internal/captcha` (RuCaptcha), `internal/mocklkdr` (мок API ФНС для тестов).
 - Документация: `README.md` и `docs/` (`getting-started.md`, `configuration.md`, `development.md`, `lkdr-report.md`).
-- Python-отчёт `scripts/lkdr_report.py` работает с SQLite-базой LKDR отдельно от Go-приложения.
+- Python-отчёты (`scripts/reports/*.py`) работают с SQLite-базой LKDR отдельно от Go-приложения; `make report` — интерактивное меню отчётов (раздел «Python-отчёты»).
 - Сверять документацию с текущим кодом; не перезаписывать чужие правки.
 
 ## Архитектурные факты
@@ -19,7 +19,7 @@
 
 ## Команды разработки
 
-- `make build` / `make bin` — сборка в `bin/` (`app`, `mocklkdr`); `make test` — `go test -v ./...`; одиночный тест: `go test -v ./path/to/pkg -run TestName`.
+- `make build` / `make bin` — сборка в `bin/` (`app`, `mocklkdr`); `make test` — `go test -v ./...` + автотесты Python-отчётов (`scripts/tests/`); одиночный тест: `go test -v ./path/to/pkg -run TestName`.
 - Тесты: `internal/jobs/jobs_test.go`, `batch_test.go`, `internal/triggers/stdin/trigger_test.go`, `internal/jobs/lkdr/internal/loaders/{receipts,fiscal_data}_test.go`; интеграционные — `internal/jobs/lkdr/integration_test.go` (мок подменяет ФНС через redirect-транспорт; отдельно мок запускается `docker compose up mocklkdr` → `lkdr.apiUrl`). Новую логику сопровождать тестами.
 - `scripts/dist.sh` — релизные архивы в `bin/` (кросс-сборка требует C-компилятор из-за SQLite/CGO).
 
@@ -44,15 +44,18 @@ make parse
 - `fiscal_data.go`: дозагрузка отсутствующих деталей и позиций; `receipt.fiscal.data.unavailable` — до 5 пропусков за запуск, следующий останавливает загрузчик; отсутствующие данные и известная внутренняя ошибка API пропускаются.
 - Отчёт сам не синхронизирует ФНС: для актуальных данных сначала запустить загрузку.
 
-## Python-отчёт
+## Python-отчёты
 
 Python 3.10+, только стандартная библиотека. Из корня репозитория:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python scripts/lkdr_report.py --db lkdr.db --days 30 --top 10
+.venv/bin/python scripts/reports/lkdr_report.py --db lkdr.db --days 30 --top 10
 PATH="$PWD/.venv/bin:$PATH" make lkdr-report
 ```
+
+- Меню `make report` (`scripts/report.py`): автодискавери `scripts/reports/*.py`; id = имя файла; `_`-префикс — служебные, в меню не попадают; заголовок меню = первая строка docstring скрипта. Без меню: `./scripts/report.py <id> [args]`, `--list`.
+- Новые отчёты: копировать `scripts/reports/_template.py` (как добавлять — docs/development.md, раздел «Python-отчёты»); пример по правилам — `scripts/reports/example.py`. Автотесты отчётов — `scripts/tests/test_reports.py` (unittest; запускаются `make test` вместе с Go-тестами, поэтому `make test` требует python3).
 
 - Обязательные таблицы: `receipts`, `brands`, `fiscal_data`, `fiscal_data_items`; перед запуском проверять существование БД.
 - Конец периода — `max(fiscal_data.date_time)` (переопределяется `--as-of`); текущий период сравнивается с предыдущим той же длины, обе границы включены.

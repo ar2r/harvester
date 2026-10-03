@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a spending report from an lkdr SQLite database."""
+"""Отчёт по покупкам из SQLite-базы LKDR."""
 
 from __future__ import annotations
 
