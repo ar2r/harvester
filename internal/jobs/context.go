@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/ar2r/ledger-fox/internal/logs"
-
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 )
 
@@ -83,7 +81,9 @@ func (ctx Context) Error(errs *error, err error, msg string) bool {
 		return false
 	}
 
-	_ = multierr.AppendInto(errs, errors.Errorf("%s%s", ctx.path.String(), msg))
+	// Причина заворачивается через %w: агрегированный текст несёт
+	// исходную ошибку, а errors.Is/As по причине продолжают работать.
+	_ = multierr.AppendInto(errs, fmt.Errorf("%s%s: %w", ctx.path.String(), msg, err))
 	ctx.log.Error(msg, logs.Error(err))
 
 	return true
