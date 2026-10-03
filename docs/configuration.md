@@ -75,7 +75,7 @@
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
-| `rucaptchaKey` | string | API-ключ [rucaptcha.com](https://rucaptcha.com) для автоматического решения капчи при авторизации. |
+| `rucaptchaKey` | string | API-ключ [rucaptcha.com](https://rucaptcha.com) для автоматического решения капчи. Нужен для первой авторизации: без него задача падает с ошибкой `authorizer is required, but not set`. |
 
 ## Безопасность
 
