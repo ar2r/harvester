@@ -13,8 +13,8 @@ import (
 	"github.com/jfk9w-go/based"
 	"go.uber.org/multierr"
 
-	"github.com/jfk9w/hoarder/internal/logs"
-	"github.com/jfk9w/hoarder/internal/triggers"
+	"github.com/ar2r/harvester/internal/logs"
+	"github.com/ar2r/harvester/internal/triggers"
 )
 
 const TriggerID = "stdin"

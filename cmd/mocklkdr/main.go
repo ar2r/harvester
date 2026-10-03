@@ -16,7 +16,7 @@ import (
 	// встраиваем tzdata, чтобы мок работал в образах без /usr/share/zoneinfo.
 	_ "time/tzdata"
 
-	"github.com/jfk9w/hoarder/internal/mocklkdr"
+	"github.com/ar2r/harvester/internal/mocklkdr"
 )
 
 func main() {

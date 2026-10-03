@@ -1,4 +1,4 @@
-module github.com/jfk9w/hoarder
+module github.com/ar2r/harvester
 
 go 1.26.0
 

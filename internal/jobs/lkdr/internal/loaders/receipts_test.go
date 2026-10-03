@@ -8,7 +8,7 @@ import (
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
 
-	"github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
+	"github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
 )
 
 func TestReceiptsInitialSyncLimitsToTwelveMonths(t *testing.T) {

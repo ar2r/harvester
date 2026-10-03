@@ -1,7 +1,7 @@
 package lkdr
 
 import (
-	. "github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
+	. "github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
 )
 
 var entities = []any{

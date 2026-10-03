@@ -11,9 +11,9 @@ import (
 	"github.com/jfk9w-go/based"
 	"github.com/jfk9w-go/lkdr-api"
 
-	"github.com/jfk9w/hoarder/internal/database"
-	"github.com/jfk9w/hoarder/internal/jobs"
-	"github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
+	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
 )
 
 type fakeClient struct {

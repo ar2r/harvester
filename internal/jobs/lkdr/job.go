@@ -13,13 +13,13 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/jfk9w/hoarder/internal/captcha"
-	"github.com/jfk9w/hoarder/internal/common"
-	"github.com/jfk9w/hoarder/internal/database"
-	"github.com/jfk9w/hoarder/internal/jobs"
-	. "github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
-	"github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/loaders"
-	"github.com/jfk9w/hoarder/internal/logs"
+	"github.com/ar2r/harvester/internal/captcha"
+	"github.com/ar2r/harvester/internal/common"
+	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/harvester/internal/jobs"
+	. "github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
+	"github.com/ar2r/harvester/internal/jobs/lkdr/internal/loaders"
+	"github.com/ar2r/harvester/internal/logs"
 )
 
 const JobID = "lkdr"

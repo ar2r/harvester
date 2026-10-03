@@ -14,8 +14,8 @@ import (
 
 	"github.com/jfk9w-go/based"
 
-	"github.com/jfk9w/hoarder/internal/jobs"
-	"github.com/jfk9w/hoarder/internal/triggers"
+	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/harvester/internal/triggers"
 )
 
 type fakeRun struct {

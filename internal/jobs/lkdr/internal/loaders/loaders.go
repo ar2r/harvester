@@ -6,8 +6,8 @@ import (
 	"github.com/jfk9w-go/lkdr-api"
 	"gorm.io/gorm/schema"
 
-	"github.com/jfk9w/hoarder/internal/database"
-	"github.com/jfk9w/hoarder/internal/jobs"
+	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/harvester/internal/jobs"
 )
 
 type Client interface {

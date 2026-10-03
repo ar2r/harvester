@@ -10,7 +10,7 @@ import (
 	"github.com/jfk9w-go/based"
 	"github.com/jfk9w-go/confi"
 
-	"github.com/jfk9w/hoarder/internal/database"
+	"github.com/ar2r/harvester/internal/database"
 )
 
 // Схема конфига генерируется на каждом старте приложения; doc-теги парсятся

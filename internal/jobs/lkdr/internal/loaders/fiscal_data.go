@@ -6,10 +6,10 @@ import (
 	"github.com/AlekSi/pointer"
 	"github.com/jfk9w-go/lkdr-api"
 
-	"github.com/jfk9w/hoarder/internal/database"
-	"github.com/jfk9w/hoarder/internal/jobs"
-	"github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
-	"github.com/jfk9w/hoarder/internal/logs"
+	"github.com/ar2r/harvester/internal/database"
+	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
+	"github.com/ar2r/harvester/internal/logs"
 )
 
 const maxUnavailableFiscalDataSkips = 5

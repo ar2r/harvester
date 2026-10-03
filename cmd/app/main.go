@@ -13,12 +13,12 @@ import (
 	"github.com/jfk9w-go/confi"
 	"github.com/pkg/errors"
 
-	"github.com/jfk9w/hoarder/internal/captcha"
-	"github.com/jfk9w/hoarder/internal/jobs"
-	"github.com/jfk9w/hoarder/internal/jobs/lkdr"
-	"github.com/jfk9w/hoarder/internal/logs"
-	"github.com/jfk9w/hoarder/internal/triggers"
-	"github.com/jfk9w/hoarder/internal/triggers/stdin"
+	"github.com/ar2r/harvester/internal/captcha"
+	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/harvester/internal/jobs/lkdr"
+	"github.com/ar2r/harvester/internal/logs"
+	"github.com/ar2r/harvester/internal/triggers"
+	"github.com/ar2r/harvester/internal/triggers/stdin"
 )
 
 type Config struct {

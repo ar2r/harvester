@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jfk9w/hoarder/internal/common"
+	"github.com/ar2r/harvester/internal/common"
 )
 
 const All = "all"

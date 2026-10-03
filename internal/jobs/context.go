@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jfk9w/hoarder/internal/logs"
+	"github.com/ar2r/harvester/internal/logs"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"

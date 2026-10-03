@@ -9,8 +9,8 @@ import (
 	"github.com/jfk9w-go/based"
 	"go.uber.org/multierr"
 
-	"github.com/jfk9w/hoarder/internal/jobs"
-	"github.com/jfk9w/hoarder/internal/logs"
+	"github.com/ar2r/harvester/internal/jobs"
+	"github.com/ar2r/harvester/internal/logs"
 )
 
 type Jobs interface {

@@ -7,8 +7,8 @@ import (
 	"github.com/pkg/errors"
 	"gorm.io/gorm"
 
-	"github.com/jfk9w/hoarder/internal/database"
-	. "github.com/jfk9w/hoarder/internal/jobs/lkdr/internal/entities"
+	"github.com/ar2r/harvester/internal/database"
+	. "github.com/ar2r/harvester/internal/jobs/lkdr/internal/entities"
 )
 
 type storage struct {
