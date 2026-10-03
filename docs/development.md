@@ -15,6 +15,7 @@
 | `make report-all` | Всё сразу и без вопросов: обновляет HTML-отчёт месяца (`reports/lkdr-YYYY-MM.html`), затем печатает текстовый отчёт с AI-выводами и рекомендациями прямо в консоль. Те же переменные: `LKDR_DB`, `AI_REPORT_ARGS`, `LKDR_AI_ARGS`, `LKDR_DAYS`/`LKDR_TOP`. |
 | `make ai-report` | HTML-отчёт «Месяц в чеках» в `reports/lkdr-YYYY-MM.html` (месяц — из конца периода: свежий чек или `--as-of`; перезапуск обновляет файл того же месяца). AI-выводы через настраиваемый AI CLI — по умолчанию codex, агент задаётся `ai.command` в [конфигурации](configuration.md#ai); при недоступности — детерминированные из данных. Аргументы: `AI_REPORT_ARGS`, база — `LKDR_DB`. |
 | `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md); `LKDR_FORMAT=md` — markdown-версия для вывода в чат AI-агента. |
+| `make lkdr-report-ai` | Только текстовый отчёт с AI-выводами и рекомендациями в консоль (`LKDR_AI_ARGS` для флагов, включая `--ai-summary`); входит в `make report-all`. |
 | `scripts/dist.sh` | Релизные архивы в `bin/` для windows/linux/darwin × amd64/arm64 (матрица сужается `GOOSES=… GOARCHES=…`; кросс требует C-компилятор из-за SQLite/CGO). |
 
 Отдельный тест:
@@ -116,3 +117,26 @@ PATH="$PWD/.venv/bin:$PATH" make lkdr-report
 ```
 
 `.venv` не коммитится (Python 3.14 создаёт внутренний `.venv/.gitignore`).
+
+## Схема базы lkdr.db
+
+База — обычный SQLite; таблицы создаёт GORM-миграция приложения, источник
+правды по колонкам — Go-сущности в `internal/jobs/lkdr/internal/entities/`.
+Отчёты работают с базой только для чтения.
+
+| Таблица | Назначение | Ключевые колонки |
+|---------|-----------|------------------|
+| `users` | Внутренние ID пользователей (`default`) ↔ телефоны. | `phone` (PK), `name` (ID). |
+| `tokens` | Токены авторизации ФНС по телефону; сюда можно перенести токены из браузера, чтобы не проходить SMS-онбординг заново. | `user_phone` (PK), `refresh_token`, `refresh_token_expires_in`, `token`, `token_expire_in`. |
+| `receipts` | Черновики чеков из списка (загрузчик `Receipts`). | `key` (PK), `user_phone`, `brand_id`, `kkt_owner` (название магазина), `receive_date`, `total_sum` (строкой). |
+| `brands` | Бренды магазинов. | `id` (PK), `name`. |
+| `fiscal_data` | Фискальные детали чека (загрузчик `FiscalData`). | `receipt_key` (PK), `date_time` (дата покупки, ISO с офсетом), `operation_type` (1 — покупка, 2/3 — возврат), `total_sum`, `prepaid_sum`, `retail_place`, `user`. |
+| `fiscal_data_items` | Позиции чека. | `receipt_key` + `db_idx` (составной PK), `name`, `quantity`, `price`, `sum`. |
+
+Полный список колонок быстрее посмотреть в самой базе:
+`sqlite3 lkdr.db '.schema'`.
+
+Конвенции, на которые опираются отчёты: суммы позиций у возвратного чека
+положительные — знак даёт `operation_type`; `date_time` может содержать
+разные часовые офсеты (`+03:00`, `+05:00`), сравнивать даты нужно как
+время, а не как строки.

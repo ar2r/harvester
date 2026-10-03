@@ -1,0 +1,17 @@
+{
+  "log": { "level": "INFO" },
+  "stdin": { "enabled": true },
+  "captcha": { "rucaptchaKey": "<API-ключ RuCaptcha>" },
+  "lkdr": {
+    "enabled": true,
+    "database": { "dsn": "lkdr.db" },
+    "users": {
+      "default": [{ "phone": "79001234567" }]
+    }
+  },
+  "ai": { "command": "codex exec --color never --sandbox read-only -" },
+  "reports": {
+    "maxItemNameChars": 40,
+    "privateCategories": ["Аптека и здоровье", "Косметика и гигиена"]
+  }
+}
