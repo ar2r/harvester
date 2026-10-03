@@ -12,7 +12,7 @@
 | `make run` | Сборка и запуск с `./config.json`: DEBUG-логи, все пользователи из конфига (`RUN_USER=all` по умолчанию). |
 | `make clean` | Очистка `bin/`. |
 | `make report` | Интерактивное меню Python-отчётов из `scripts/reports/`; аргументы пробрасываются выбранным скриптам: `make report REPORT_ARGS="--db my.db"`. |
-| `make ai-report` | HTML-отчёт «Месяц в чеках» в `reports/lkdr-YYYY-MM.html` (месяц — из конца периода: свежий чек или `--as-of`; перезапуск обновляет файл того же месяца). AI-выводы через Codex CLI, при недоступности — детерминированные из данных. Аргументы: `AI_REPORT_ARGS`, база — `LKDR_DB`. |
+| `make ai-report` | HTML-отчёт «Месяц в чеках» в `reports/lkdr-YYYY-MM.html` (месяц — из конца периода: свежий чек или `--as-of`; перезапуск обновляет файл того же месяца). AI-выводы через настраиваемый AI CLI — по умолчанию codex, агент задаётся `ai.command` в [конфигурации](configuration.md#ai); при недоступности — детерминированные из данных. Аргументы: `AI_REPORT_ARGS`, база — `LKDR_DB`. |
 | `make lkdr-report` и др. | Отчёты по покупкам — [Отчёт по покупкам LKDR](lkdr-report.md). |
 | `scripts/dist.sh` | Релизные архивы в `bin/` для windows/linux/darwin × amd64/arm64 (матрица сужается `GOOSES=… GOARCHES=…`; кросс требует C-компилятор из-за SQLite/CGO). |
 

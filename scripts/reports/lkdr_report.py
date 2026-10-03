@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -14,6 +15,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import _config
 
 
 DEFAULT_DB = "lkdr.db"
@@ -747,15 +750,20 @@ def build_ai_prompt(
 
 
 def print_ai_summary(prompt: str, command: str, timeout: int) -> None:
-    executable = shutil.which(command)
+    argv = shlex.split(command)
+    if not argv:
+        print(COLOR.warning(f"Пустая команда AI CLI: {command!r}"))
+        return
+
+    executable = shutil.which(argv[0])
     if executable is None:
-        print(COLOR.warning(f"Codex CLI не найден: {command}"))
+        print(COLOR.warning(f"AI CLI не найден: {argv[0]}"))
         return
 
     print_header("AI-выводы и рекомендации")
     try:
         result = subprocess.run(
-            [executable, "exec", "--color", "never", "--sandbox", "read-only", "-"],
+            [executable, *argv[1:]],
             input=prompt,
             text=True,
             capture_output=True,
@@ -763,12 +771,12 @@ def print_ai_summary(prompt: str, command: str, timeout: int) -> None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        print(COLOR.warning(f"Codex не ответил за {timeout} секунд"))
+        print(COLOR.warning(f"AI CLI не ответил за {timeout} секунд"))
         return
 
     if result.returncode != 0:
         message = result.stderr.strip() or result.stdout.strip() or "неизвестная ошибка"
-        print(COLOR.warning(f"Codex завершился с ошибкой: {message}"))
+        print(COLOR.warning(f"AI CLI завершился с ошибкой: {message}"))
         return
 
     print(render_ai_output(result.stdout))
@@ -1346,12 +1354,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ai-summary",
         action="store_true",
-        help="Добавить AI-выводы и рекомендации через Codex CLI",
+        help="Добавить AI-выводы и рекомендации через AI CLI",
     )
     parser.add_argument(
         "--ai-command",
-        default="codex",
-        help="Команда Codex CLI для AI-выводов, по умолчанию codex",
+        default=None,
+        help="Команда AI CLI с аргументами (промпт — на stdin); по умолчанию ai.command из config.json, иначе codex",
+    )
+    parser.add_argument(
+        "--config",
+        default="config.json",
+        type=Path,
+        help="config.json с настройками отчётов (ai.command)",
     )
     parser.add_argument(
         "--ai-timeout",
@@ -1364,6 +1378,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    args.ai_command = args.ai_command or _config.load_ai_command(args.config)
     run_report(
         args.db,
         args.days,

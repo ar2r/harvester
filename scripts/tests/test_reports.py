@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -20,6 +22,8 @@ REPORTS_DIR = SCRIPTS_DIR / "reports"
 LAUNCHER = SCRIPTS_DIR / "report.py"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
+sys.path.insert(0, str(REPORTS_DIR))
+import _config  # noqa: E402 — scripts/reports/_config.py
 import report  # noqa: E402 — scripts/report.py
 
 
@@ -49,13 +53,30 @@ def make_test_db(path: Path) -> None:
     connection.close()
 
 
-def run_python(script: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_python(
+    script: Path,
+    *args: str,
+    stdin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(script), *args],
         input=stdin,
         capture_output=True,
         text=True,
+        env=env,
     )
+
+
+def write_fake_agent(directory: Path, name: str, output: str) -> Path:
+    """Исполняемый скрипт-агент: съедает stdin, печатает заданный текст."""
+    script = directory / name
+    script.write_text(
+        "#!/bin/sh\ncat >/dev/null\ncat <<'AGENT_EOF'\n" + output + "\nAGENT_EOF\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -232,6 +253,116 @@ class AiReportTests(unittest.TestCase):
         proc = self.run_ai_report("--db", "/nonexistent/lkdr.db", "--out-dir", "/tmp/lf-ai-missing")
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("не найдена", proc.stderr)
+
+
+class AiCommandConfigTests(unittest.TestCase):
+    def test_load_ai_command_from_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text('{"ai": {"command": "claude -p"}}', encoding="utf-8")
+            self.assertEqual(_config.load_ai_command(config), "claude -p")
+
+    def test_missing_file_returns_default(self):
+        self.assertEqual(
+            _config.load_ai_command(Path("/nonexistent/config.json")),
+            _config.DEFAULT_AI_COMMAND,
+        )
+
+    def test_missing_key_returns_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text("{}", encoding="utf-8")
+            self.assertEqual(_config.load_ai_command(config), _config.DEFAULT_AI_COMMAND)
+
+    def test_custom_default(self):
+        self.assertEqual(
+            _config.load_ai_command(Path("/nonexistent/config.json"), default="myagent"),
+            "myagent",
+        )
+
+
+class AiAgentTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"}
+
+    def test_ai_report_uses_configured_agent(self):
+        payload = json.dumps(
+            {
+                "lead": "Вывод фейк-агента",
+                "cards": [{"theme": "Тема", "title": "Карточка из фейк-агента", "body": "Тело карточки."}],
+                "actions": [{"head": "Действие", "body": "Описание действия."}],
+            },
+            ensure_ascii=False,
+        )
+        write_fake_agent(self.bin, "fakeai", payload)
+        (self.root / "config.json").write_text('{"ai": {"command": "fakeai"}}', encoding="utf-8")
+        db = self.root / "lkdr.db"
+        make_ai_test_db(db)
+
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(db),
+            "--out-dir", str(self.root / "reports"),
+            "--config", str(self.root / "config.json"),
+            env=self.env,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        content = (self.root / "reports" / "lkdr-2026-09.html").read_text(encoding="utf-8")
+        self.assertIn("Карточка из фейк-агента", content)
+        self.assertIn("Вывод фейк-агента", content)
+        self.assertIn("AI CLI (fakeai)", content)
+
+    def test_ai_report_flag_overrides_config(self):
+        payload = json.dumps(
+            {
+                "lead": "Флаг важнее конфига",
+                "cards": [{"theme": "Т", "title": "Карточка по флагу", "body": "Тело."}],
+                "actions": [],
+            },
+            ensure_ascii=False,
+        )
+        write_fake_agent(self.bin, "fakeflag", payload)
+        (self.root / "config.json").write_text('{"ai": {"command": "no-such-agent"}}', encoding="utf-8")
+        db = self.root / "lkdr.db"
+        make_ai_test_db(db)
+
+        proc = run_python(
+            REPORTS_DIR / "ai_report.py",
+            "--db", str(db),
+            "--out-dir", str(self.root / "reports"),
+            "--config", str(self.root / "config.json"),
+            "--ai-command", "fakeflag",
+            env=self.env,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        content = (self.root / "reports" / "lkdr-2026-09.html").read_text(encoding="utf-8")
+        self.assertIn("Карточка по флагу", content)
+        self.assertIn("AI CLI (fakeflag)", content)
+
+    def test_lkdr_report_uses_configured_agent(self):
+        write_fake_agent(self.bin, "fakeai", "ТЕСТ_AI_ВЫВОД_12345")
+        (self.root / "config.json").write_text('{"ai": {"command": "fakeai"}}', encoding="utf-8")
+        db = self.root / "lkdr.db"
+        make_ai_test_db(db)
+
+        proc = run_python(
+            REPORTS_DIR / "lkdr_report.py",
+            "--db", str(db),
+            "--config", str(self.root / "config.json"),
+            "--ai-summary",
+            "--color", "never",
+            env=self.env,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("ТЕСТ_AI_ВЫВОД_12345", proc.stdout)
 
 
 class ExampleReportTests(unittest.TestCase):

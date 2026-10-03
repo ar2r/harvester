@@ -19,6 +19,7 @@ import html
 import json
 import math
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -27,6 +28,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import _config
 import lkdr_report as base
 
 DEFAULT_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "lkdr-report.html"
@@ -423,13 +425,17 @@ def build_ai_json_prompt(data: dict) -> str:
 
 
 def request_ai(prompt: str, command: str, timeout: int) -> tuple[dict | None, str | None]:
-    executable = shutil.which(command)
+    argv = split_command(command)
+    if argv is None:
+        return None, f"пустая команда AI CLI: {command!r}"
+
+    executable = shutil.which(argv[0])
     if executable is None:
-        return None, f"Codex CLI не найден: {command}"
+        return None, f"AI CLI не найден: {argv[0]}"
 
     try:
         result = subprocess.run(
-            [executable, "exec", "--color", "never", "--sandbox", "read-only", "-"],
+            [executable, *argv[1:]],
             input=prompt,
             text=True,
             capture_output=True,
@@ -437,26 +443,36 @@ def request_ai(prompt: str, command: str, timeout: int) -> tuple[dict | None, st
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return None, f"Codex не ответил за {timeout} секунд"
+        return None, f"AI CLI не ответил за {timeout} секунд"
 
     if result.returncode != 0:
         message = result.stderr.strip() or result.stdout.strip() or "неизвестная ошибка"
-        return None, f"Codex завершился с ошибкой: {message}"
+        return None, f"AI CLI завершился с ошибкой: {message}"
 
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", result.stdout.strip(), flags=re.MULTILINE).strip()
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
-        return None, "Codex вернул ответ без JSON"
+        return None, "AI CLI вернул ответ без JSON"
 
     try:
         payload = json.loads(text[start : end + 1])
     except json.JSONDecodeError as error:
-        return None, f"Codex вернул невалидный JSON: {error}"
+        return None, f"AI CLI вернул невалидный JSON: {error}"
 
     if not isinstance(payload.get("lead"), str) or not isinstance(payload.get("cards"), list) or not payload["cards"]:
-        return None, "JSON Codex без lead/cards"
+        return None, "JSON AI CLI без lead/cards"
 
     return payload, None
+
+
+def split_command(command: str) -> list[str] | None:
+    """Командная строка агента → argv; None, если она пуста или битая."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+
+    return argv or None
 
 
 def fallback_ai(data: dict) -> dict:
@@ -858,9 +874,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--top", default=10, type=int, help="Строк в топах")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, type=Path, help="Каталог отчётов (по умолчанию reports)")
     parser.add_argument("--currency", default="auto", help="RUB/KZT или auto — основная валюта периода")
-    parser.add_argument("--no-ai", action="store_true", help="Не вызывать Codex CLI: карточки из данных")
-    parser.add_argument("--ai-command", default="codex", help="Команда Codex CLI")
-    parser.add_argument("--ai-timeout", default=180, type=int, help="Таймаут Codex CLI, секунды")
+    parser.add_argument("--no-ai", action="store_true", help="Не вызывать AI CLI: карточки из данных")
+    parser.add_argument("--ai-command", default=None, help="Команда AI CLI с аргументами (промпт — на stdin); по умолчанию ai.command из config.json, иначе codex")
+    parser.add_argument("--ai-timeout", default=180, type=int, help="Таймаут AI CLI, секунды")
+    parser.add_argument("--config", default="config.json", type=Path, help="config.json с настройками отчётов (ai.command)")
     parser.add_argument("--template", default=DEFAULT_TEMPLATE, type=Path, help="Файл HTML-шаблона")
     return parser.parse_args(argv)
 
@@ -892,9 +909,10 @@ def main(argv: list[str] | None = None) -> int:
     data["as_of_auto"] = args.as_of is None
 
     ai_payload, ai_error = (None, None)
+    ai_command = args.ai_command or _config.load_ai_command(args.config)
     if not args.no_ai:
         ai_payload, ai_error = request_ai(
-            build_ai_json_prompt(data), args.ai_command, args.ai_timeout
+            build_ai_json_prompt(data), ai_command, args.ai_timeout
         )
         if ai_error:
             print(f"AI недоступен ({ai_error}); карточки построены из данных", file=sys.stderr)
@@ -903,7 +921,8 @@ def main(argv: list[str] | None = None) -> int:
         ai_payload = fallback_ai(data)
         data["ai_source"] = "детерминированный анализ данных"
     else:
-        data["ai_source"] = "Codex CLI"
+        agent = (split_command(ai_command) or [ai_command])[0]
+        data["ai_source"] = f"AI CLI ({agent})"
 
     scalars, blocks = build_render(data, ai_payload)
 
