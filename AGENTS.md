@@ -20,7 +20,7 @@
 ## Команды разработки
 
 - `make build` / `make bin` — сборка в `bin/` (`app`, `mocklkdr`); `make test` — `go test -v ./...` + автотесты Python-отчётов (`scripts/tests/`); одиночный тест: `go test -v ./path/to/pkg -run TestName`.
-- Тесты: `internal/jobs/jobs_test.go`, `batch_test.go`, `internal/triggers/stdin/trigger_test.go`, `internal/jobs/lkdr/internal/loaders/{receipts,fiscal_data}_test.go`; интеграционные — `internal/jobs/lkdr/integration_test.go` (мок подменяет ФНС через redirect-транспорт; отдельно мок запускается `docker compose up mocklkdr` → `lkdr.apiUrl`). Новую логику сопровождать тестами.
+- Тесты: юнит-тесты colocated в пакетах (`internal/database`, `internal/common`, `internal/logs`, `internal/captcha`, `internal/jobs`, `internal/jobs/lkdr` + `storage_test.go`, `internal/jobs/lkdr/internal/{entities,loaders}`, `internal/triggers` + `internal/triggers/stdin`); интеграционные — `internal/jobs/lkdr/integration_test.go` (мок подменяет ФНС через redirect-транспорт; отдельно мок запускается `docker compose up mocklkdr` → `lkdr.apiUrl`); E2E — `cmd/app/e2e_test.go` (собирает бинарник и гоняет его как чёрный ящик). Новую логику сопровождать тестами.
 - `scripts/dist.sh` — релизные архивы в `bin/` (кросс-сборка требует C-компилятор из-за SQLite/CGO).
 
 ## Безопасность и приватность
