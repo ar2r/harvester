@@ -114,7 +114,7 @@
 
 **HTML-отчёт месяца** — `make ai-report`:
 
-- [**Открыть пример HTML-отчёта**](https://htmlpreview.github.io/?https://github.com/ar2r/harvester/blob/master/docs/example-report.html) —
+- [**Открыть пример HTML-отчёта**](https://htmlpreview.github.io/?https://github.com/ar2r/ledger-fox/blob/master/docs/example-report.html) —
   отрендеренный вид в браузере;
 - [docs/example-report.html](docs/example-report.html) — файл в репозитории
   (сгенерирован с `--no-ai`: карточки детерминированные, без вызова AI; один
